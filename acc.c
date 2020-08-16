@@ -3,7 +3,7 @@
 
 typedef struct {
 	enum {
-		T_ADD = 1, T_SUB, T_MUL, T_DIV, T_INT
+		T_ADD = 1, T_SUB, T_MUL, T_DIV, T_INT, T_EOF
 	} type;
 	int int_val;
 } Token;
@@ -18,30 +18,37 @@ typedef struct expr {
 } Expr;
 
 static const int punct[128] = {
-	['*'] = T_MUL,
 	['+'] = T_ADD,
 	['-'] = T_SUB,
+	['*'] = T_MUL,
 	['/'] = T_DIV,
 };
 
+static const int token_op[T_INT] = {
+	[T_ADD] = OP_ADD,
+	[T_SUB] = OP_SUB,
+	[T_MUL] = OP_MUL,
+	[T_DIV] = OP_DIV
+};
+
 FILE *in;
-int linum;
+int linum = 1;
 int unused_char;
 
-void
+static void
 putback_char(int c)
 {
 	unused_char = c;
 }
 
-int
+static int
 is_digit(int c)
 {
 	return c >= 48 && c <= 57;
 }
 
-int
-next_char()
+static int
+next_char(void)
 {
 	if (unused_char) {
 		char c = unused_char;
@@ -51,7 +58,16 @@ next_char()
 	return fgetc(in);
 }
 
-Token
+static void
+skip_space(void)
+{
+	int c;
+
+	while ((c = next_char()) == ' ');
+	putback_char(c);
+}
+
+static Token
 mktoken(int type, int int_val)
 {
 	Token t;
@@ -63,17 +79,18 @@ mktoken(int type, int int_val)
 	return t;
 }
 
-Token
+static Token
 mktint(int int_val)
 {
 	return mktoken(T_INT, int_val);
 }
 
-Token
-lex()
+static Token
+lex(void)
 {
 	char c;
 
+	skip_space();
 	c = next_char();
 	if (is_digit(c)) {
 		int n;
@@ -89,7 +106,15 @@ lex()
 	exit(1);
 }
 
-Expr *
+Token unused_token;
+
+static Token
+next_token(void)
+{
+	return lex();
+}
+
+static Expr *
 mkexpr(unsigned int op, Expr *left, Expr *right, int int_val)
 {
 	Expr *e;
@@ -106,13 +131,48 @@ mkexpr(unsigned int op, Expr *left, Expr *right, int int_val)
 	return e;
 }
 
-Expr *
+static Expr *
 mkeint(int int_val)
 {
 	return mkexpr(INT_LIT, NULL, NULL, int_val);
 }
 
+static Expr *
+mkebin(int op, Expr *left, Expr *right)
+{
+	return mkexpr(op, right, left, 0);
+}
+
+static Expr *
+prim_expr(void)
+{
+	Token t;
+
+	t = next_token();
+	switch (t.type) {
+	case T_INT: return mkeint(t.int_val);
+	default:
+		fprintf(stderr, "Unexpected token on line %d.\n", linum);
+		exit(1);
+	}
+}
+
+static Expr *
+binexpr(void)
+{
+	Expr *e, *left, *right;
+	Token t;
+
+	left = prim_expr();
+	t = next_token();
+	if (t.type == T_EOF)
+		return left;
+	right = binexpr();
+	return mkebin(t.type, left, right);
+}
+
 int
 main()
 {
+	unused_token = mktoken(T_EOF, 0);
 }
