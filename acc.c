@@ -31,6 +31,15 @@ static const int token_op[T_INT] = {
 	[T_DIV] = OP_DIV
 };
 
+static const int prec_op[T_EOF + 1] = {
+	[T_ADD] = 10,
+	[T_SUB] = 10,
+	[T_MUL] = 20,
+	[T_DIV] = 20,
+	[T_INT] = 0,
+	[T_EOF] = 0
+};
+
 FILE *in;
 int linum = 1;
 int unused_char;
@@ -108,10 +117,22 @@ lex(void)
 
 Token unused_token;
 
-static Token
+void
+putback_token(Token t)
+{
+	unused_token = t;
+}
+
+Token
 next_token(void)
 {
-	return lex();
+	if (unused_token.type == T_EOF)
+		return lex();
+	else {
+		Token t = unused_token;
+		unused_token = mktoken(T_EOF, 0);
+		return t;
+	}
 }
 
 static Expr *
@@ -157,8 +178,19 @@ prim_expr(void)
 	}
 }
 
+int
+op_precedence(Token t)
+{
+	int op_p;
+
+	op_p = prec_op[t.type];
+	if (op_p != 0) return op_p;
+	fprintf(stderr, "Syntax error on line %d, unxepected token.", linum);
+	exit(1);
+}
+
 static Expr *
-binexpr(void)
+binexpr(int prec)
 {
 	Expr *e, *left, *right;
 	Token t;
@@ -167,8 +199,14 @@ binexpr(void)
 	t = next_token();
 	if (t.type == T_EOF)
 		return left;
-	right = binexpr();
-	return mkebin(t.type, left, right);
+	while (op_precedence(t) > prec) {
+		right = binexpr(prec_op[t.type]);
+		left = mkebin(token_op[t.type], left, right);
+		t = next_token();
+		if (t.type == T_EOF)
+			return left;
+	}
+	return left;
 }
 
 int
