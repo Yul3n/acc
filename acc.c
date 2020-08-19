@@ -209,6 +209,53 @@ binexpr(int prec)
 	return left;
 }
 
+static char *reglist[4]= { "%r8", "%r9", "%r10", "%r11" };
+
+static int
+cadd(int l, int r)
+{
+	return l;
+}
+static int
+csub(int l, int r)
+{
+	return l;
+}
+
+static int
+cmul(int l, int r)
+{
+	return l;
+}
+static int
+cdiv(int l, int r)
+{
+	return l;
+}
+
+static int
+cload(int n)
+{
+	return n;
+}
+
+static int
+compile_expr(Expr *e)
+{
+	int lreg, rreg;
+
+	if (e->right) rreg = compile_expr(e->right);
+	if (e->left) lreg = compile_expr(e->left);
+
+	switch (e->op) {
+	case OP_ADD: return cadd(lreg, rreg);
+	case OP_SUB: return csub(lreg, rreg);
+	case OP_MUL: return cadd(lreg, rreg);
+	case OP_DIV: return cdiv(lreg, rreg);
+	case INT_LIT: return cload(e->int_val);
+	}
+}
+
 int
 main()
 {
