@@ -42,7 +42,7 @@ static const int prec_op[T_EOF + 1] = {
 
 FILE *in;
 int linum = 1;
-int unused_char;
+int unused_char = 0;
 
 static void
 putback_char(int c)
@@ -60,7 +60,7 @@ static int
 next_char(void)
 {
 	if (unused_char) {
-		char c = unused_char;
+		int c = unused_char;
 		unused_char = 0;
 		return c;
 	}
@@ -97,10 +97,11 @@ mktint(int int_val)
 static Token
 lex(void)
 {
-	char c;
+	int c;
 
 	skip_space();
 	c = next_char();
+	if (c == EOF) return mktoken(T_EOF, 0);
 	if (is_digit(c)) {
 		int n;
 		n = c - '0';
@@ -209,34 +210,69 @@ binexpr(int prec)
 	return left;
 }
 
-static char *reglist[4]= { "%r8", "%r9", "%r10", "%r11" };
+static char *reglist[4] = { "%r8", "%r9", "%r10", "%r11" };
+static int freeregs[4]  = { 0, 0, 0, 0 };
+FILE *out;
+
+static int
+alloc_reg()
+{
+	for (int i = 0; i < 4; ++i)
+		if (!freeregs[i]) {
+			freeregs[i] = 1;
+			return i;
+		}
+	fprintf(stderr, "Unable to allocate a register");
+	exit(1);
+}
+
+static void
+free_reg(int reg)
+{
+	freeregs[reg] = 0;
+}
 
 static int
 cadd(int l, int r)
 {
+	fprintf(out, "addq %s, %s\n", reglist[r], reglist[l]);
+	free_reg(r);
 	return l;
 }
 static int
 csub(int l, int r)
 {
+	fprintf(out, "subq %s, %s\n", reglist[r], reglist[l]);
+	free_reg(r);
 	return l;
 }
 
 static int
 cmul(int l, int r)
 {
+	fprintf(out, "imulq %s, %s\n", reglist[r], reglist[l]);
+	free_reg(r);
 	return l;
 }
 static int
 cdiv(int l, int r)
 {
+	fprintf(out,
+	        "movq %s, %%rax\n"
+	        "cqo\n"
+	        "idivq %s\n"
+	        "movq %%rax, %s\n", reglist[l], reglist[r], reglist[l]);
 	return l;
 }
 
 static int
 cload(int n)
 {
-	return n;
+	int reg;
+
+	reg = alloc_reg();
+	fprintf(out, "movq $%d, %s\n", n, reglist[reg]);
+	return reg;
 }
 
 static int
@@ -256,8 +292,37 @@ compile_expr(Expr *e)
 	}
 }
 
-int
-main()
+static void
+cprolog()
 {
+	fputs(".globl main\n"
+	      ".type main, @function\n"
+	      "main:\n"
+	      "pushq %rbp\n"
+	      "movq %rsp, %rbp\n",
+	      out);
+}
+
+static void
+cepilog(int n)
+{
+	fprintf(out,
+	        "movq %s, %%rdi\n"
+	        "movq $60, %%rax\n"
+	        "syscall\n", reglist[n]);
+}
+
+int
+main(int argc, char *argv[])
+{
+	Expr *e;
+
 	unused_token = mktoken(T_EOF, 0);
+	in  = fopen(argv[1], "r");
+	out = fopen("out.s", "w");
+	e = binexpr(0);
+	cprolog();
+	cepilog(compile_expr(e));
+	fclose(in);
+	fclose(out);
 }
