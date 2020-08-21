@@ -112,11 +112,16 @@ lex(void)
 		putback_char(c);
 		return mktint(n);
 	} else if(punct[c]) return mktoken(punct[c], 0);
+	else if (c == '\n') {
+		++linum;
+		return lex();
+	}
 	fprintf(stderr, "Unexpected character: '%c'\n", (char)c);
 	exit(1);
 }
 
 Token unused_token;
+Token current_token;
 
 void
 putback_token(Token t)
@@ -127,13 +132,15 @@ putback_token(Token t)
 Token
 next_token(void)
 {
+	Token t;
+
 	if (unused_token.type == T_EOF)
-		return lex();
+		t = lex();
 	else {
-		Token t = unused_token;
+		t = unused_token;
 		unused_token = mktoken(T_EOF, 0);
-		return t;
 	}
+	return current_token = t;
 }
 
 static Expr *
@@ -168,11 +175,13 @@ mkebin(int op, Expr *left, Expr *right)
 static Expr *
 prim_expr(void)
 {
-	Token t;
 
-	t = next_token();
-	switch (t.type) {
-	case T_INT: return mkeint(t.int_val);
+	switch (current_token.type) {
+	case T_INT: {
+		int n = current_token.int_val;
+		next_token();
+		return mkeint(n);
+	}
 	default:
 		fprintf(stderr, "Unexpected token on line %d.\n", linum);
 		exit(1);
@@ -180,13 +189,13 @@ prim_expr(void)
 }
 
 int
-op_precedence(Token t)
+op_precedence(int op)
 {
 	int op_p;
 
-	op_p = prec_op[t.type];
+	op_p = prec_op[op];
 	if (op_p != 0) return op_p;
-	fprintf(stderr, "Syntax error on line %d, unxepected token.", linum);
+	fprintf(stderr, "Syntax error on line %d, unxepected token.\n", linum);
 	exit(1);
 }
 
@@ -194,17 +203,17 @@ static Expr *
 binexpr(int prec)
 {
 	Expr *e, *left, *right;
-	Token t;
+	int ttype;
 
 	left = prim_expr();
-	t = next_token();
-	if (t.type == T_EOF)
+	ttype = current_token.type;
+	if (current_token.type == T_EOF)
 		return left;
-	while (op_precedence(t) > prec) {
-		right = binexpr(prec_op[t.type]);
-		left = mkebin(token_op[t.type], left, right);
-		t = next_token();
-		if (t.type == T_EOF)
+	while (op_precedence(ttype) > prec) {
+		next_token();
+		right = binexpr(prec_op[ttype]);
+		left = mkebin(token_op[ttype], left, right);
+		if ((ttype = current_token.type) == T_EOF)
 			return left;
 	}
 	return left;
@@ -254,6 +263,7 @@ cmul(int l, int r)
 	free_reg(r);
 	return l;
 }
+
 static int
 cdiv(int l, int r)
 {
@@ -286,7 +296,7 @@ compile_expr(Expr *e)
 	switch (e->op) {
 	case OP_ADD: return cadd(lreg, rreg);
 	case OP_SUB: return csub(lreg, rreg);
-	case OP_MUL: return cadd(lreg, rreg);
+	case OP_MUL: return cmul(lreg, rreg);
 	case OP_DIV: return cdiv(lreg, rreg);
 	case INT_LIT: return cload(e->int_val);
 	}
@@ -295,7 +305,23 @@ compile_expr(Expr *e)
 static void
 cprolog()
 {
-	fputs(".globl main\n"
+	fputs(".text\n"
+	      ".LC0:\n"
+	      ".string\t\"%d\\n\"\n"
+	      "printint:\n"
+	      "pushq %rbp\n"
+	      "movq %rsp, %rbp\n"
+	      "subq $16, %rsp\n"
+	      "movl %edi, -4(%rbp)\n"
+	      "movl -4(%rbp), %eax\n"
+	      "movl %eax, %esi\n"
+	      "leaq .LC0(%rip), %rdi\n"
+	      "movl $0, %eax\n"
+	      "call printf@PLT\n"
+	      "nop\n"
+	      "leave\n"
+	      "ret\n"
+	      ".globl main\n"
 	      ".type main, @function\n"
 	      "main:\n"
 	      "pushq %rbp\n"
@@ -308,6 +334,8 @@ cepilog(int n)
 {
 	fprintf(out,
 	        "movq %s, %%rdi\n"
+	        "call printint\n"
+	        "movq $0, %%rdi\n"
 	        "movq $60, %%rax\n"
 	        "syscall\n", reglist[n]);
 }
@@ -320,6 +348,8 @@ main(int argc, char *argv[])
 	unused_token = mktoken(T_EOF, 0);
 	in  = fopen(argv[1], "r");
 	out = fopen("out.s", "w");
+	/* Get the first token */
+	next_token();
 	e = binexpr(0);
 	cprolog();
 	cepilog(compile_expr(e));
