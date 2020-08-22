@@ -1,9 +1,11 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <ctype.h>
+#include <string.h>
 
 typedef struct {
 	enum {
-		T_ADD = 1, T_SUB, T_MUL, T_DIV, T_INT, T_EOF
+		T_ADD = 1, T_SUB, T_MUL, T_DIV, T_INT, T_SEMI, T_PRINT, T_EOF
 	} type;
 	int int_val;
 } Token;
@@ -22,6 +24,7 @@ static const int punct[128] = {
 	['-'] = T_SUB,
 	['*'] = T_MUL,
 	['/'] = T_DIV,
+	[';'] = T_SEMI
 };
 
 static const int token_op[T_INT] = {
@@ -48,12 +51,6 @@ static void
 putback_char(int c)
 {
 	unused_char = c;
-}
-
-static int
-is_digit(int c)
-{
-	return c >= 48 && c <= 57;
 }
 
 static int
@@ -94,6 +91,54 @@ mktint(int int_val)
 	return mktoken(T_INT, int_val);
 }
 
+static int
+isident(int c)
+{
+	return isdigit(c) || isalpha(c) || c == '_';
+}
+
+static char *
+lex_ident(void)
+{
+	int size, i, c;
+	char *s, *p;
+
+	i    = 0;
+	size = 256;
+	p    = (s = malloc(size)) - 1;
+	if (!p) {
+		fprintf(stderr, "Unable to allocate memory for the lexer.\n");
+		exit(1);
+	}
+	while (isident(c = next_char())) {
+		/* Allocate more memory for the string if we've reachec its limit. */
+		if (++i >= size) {
+			size += 256;
+			s     = realloc(s, size);
+			p     = s + i - 2;
+		}
+		*(++p) = c;
+	}
+	/* NUL-terminate the string. */
+	s[i] = 0;
+	putback_char(c);
+	return s;
+
+}
+
+static int
+keyword(char *s)
+{
+	/* Switch on the first later to avoid wasting a lot of time on unuseful
+	 * comparaisons. */
+	switch (*s) {
+	case 'p':
+		if (!strcmp(s, "print")) return T_PRINT;
+		break;
+	}
+	return 0;
+}
+
 static Token
 lex(void)
 {
@@ -102,17 +147,24 @@ lex(void)
 	skip_space();
 	c = next_char();
 	if (c == EOF) return mktoken(T_EOF, 0);
-	if (is_digit(c)) {
+	if (isalpha(c) || c == '_') {
+		char *s = lex_ident();
+		int ttype = keyword(s);
+		if (ttype) return mktoken(ttype, 0);
+		fprintf(stderr, "Unknown symbol: \"%s\"\n", s);
+		exit(1);
+	}
+	if (isdigit(c)) {
 		int n;
 		n = c - '0';
-		while (is_digit(c = next_char())) {
+		while (isdigit(c = next_char())) {
 			n *= 10;
 			n += c - '0';
 		}
 		putback_char(c);
 		return mktint(n);
-	} else if(punct[c]) return mktoken(punct[c], 0);
-	else if (c == '\n') {
+	} if(punct[c]) return mktoken(punct[c], 0);
+	if (c == '\n') {
 		++linum;
 		return lex();
 	}
