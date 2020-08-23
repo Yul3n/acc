@@ -181,7 +181,7 @@ putback_token(Token t)
 	unused_token = t;
 }
 
-Token
+static Token
 next_token(void)
 {
 	Token t;
@@ -195,6 +195,19 @@ next_token(void)
 	return current_token = t;
 }
 
+/****************************************************************************/
+/*                                    PARSER                                */
+/****************************************************************************/
+
+static void
+assert(int ttype, char *name)
+{
+	if (current_token.type != ttype) {
+		fprintf(stderr, "Expected: %s.\n", name);
+		exit(1);
+	}
+}
+
 static Expr *
 mkexpr(unsigned int op, Expr *left, Expr *right, int int_val)
 {
@@ -202,7 +215,7 @@ mkexpr(unsigned int op, Expr *left, Expr *right, int int_val)
 
 	e = (Expr *)malloc(sizeof(Expr));
 	if (!e) {
-		fprintf(stderr, "Unable to alloc memory in mkexpr()");
+		fprintf(stderr, "Unable to alloc memory in mkexpr().\n");
 		exit(1);
 	}
 	e->op      = op;
@@ -259,17 +272,32 @@ binexpr(int prec)
 
 	left = prim_expr();
 	ttype = current_token.type;
-	if (current_token.type == T_EOF)
+	if (current_token.type == T_SEMI)
 		return left;
+
 	while (op_precedence(ttype) > prec) {
 		next_token();
 		right = binexpr(prec_op[ttype]);
 		left = mkebin(token_op[ttype], left, right);
-		if ((ttype = current_token.type) == T_EOF)
+		if ((ttype = current_token.type) == T_SEMI)
 			return left;
 	}
 	return left;
 }
+
+void
+statement(void)
+{
+	Expr *e;
+
+	assert(T_PRINT, "print");
+	e = binexpr(0);
+	assert(T_SEMI, ";");
+}
+
+/****************************************************************************/
+/*                              CODE GENERATION                             */
+/****************************************************************************/
 
 static char *reglist[4] = { "%r8", "%r9", "%r10", "%r11" };
 static int freeregs[4]  = { 0, 0, 0, 0 };
