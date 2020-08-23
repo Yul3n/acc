@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <string.h>
 
+
 typedef struct {
 	enum {
 		T_ADD = 1, T_SUB, T_MUL, T_DIV, T_INT, T_SEMI, T_PRINT, T_EOF
@@ -18,6 +19,9 @@ typedef struct expr {
 	struct expr *right;
 	int int_val;
 } Expr;
+
+static void cprintint(int);
+static int compile_expr(Expr *);
 
 static const int punct[128] = {
 	['+'] = T_ADD,
@@ -148,6 +152,7 @@ lex(void)
 	c = next_char();
 	if (c == EOF) return mktoken(T_EOF, 0);
 	if (isalpha(c) || c == '_') {
+		putback_char(c);
 		char *s = lex_ident();
 		int ttype = keyword(s);
 		if (ttype) return mktoken(ttype, 0);
@@ -206,6 +211,7 @@ assert(int ttype, char *name)
 		fprintf(stderr, "Expected: %s.\n", name);
 		exit(1);
 	}
+	next_token();
 }
 
 static Expr *
@@ -291,8 +297,11 @@ statement(void)
 	Expr *e;
 
 	assert(T_PRINT, "print");
+	printf("%d\n", current_token.type);
 	e = binexpr(0);
 	assert(T_SEMI, ";");
+	cprintint(compile_expr(e));
+
 }
 
 /****************************************************************************/
@@ -365,6 +374,14 @@ cload(int n)
 	return reg;
 }
 
+static void
+cprintint(int reg)
+{
+	fprintf(out,
+	        "movq %s, %%rdi\n"
+	        "call printint\n", reglist[reg]);
+}
+
 static int
 compile_expr(Expr *e)
 {
@@ -410,14 +427,12 @@ cprolog()
 }
 
 static void
-cepilog(int n)
+cepilog(void)
 {
 	fprintf(out,
-	        "movq %s, %%rdi\n"
-	        "call printint\n"
 	        "movq $0, %%rdi\n"
 	        "movq $60, %%rax\n"
-	        "syscall\n", reglist[n]);
+	        "syscall\n");
 }
 
 int
@@ -432,7 +447,8 @@ main(int argc, char *argv[])
 	next_token();
 	e = binexpr(0);
 	cprolog();
-	cepilog(compile_expr(e));
+	statement();
+	cepilog();
 	fclose(in);
 	fclose(out);
 }
