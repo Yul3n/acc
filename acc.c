@@ -18,14 +18,12 @@ typedef struct expr {
 	enum {
 		OP_ADD, OP_SUB, OP_MUL, OP_DIV, INT_LIT, VAR
 	} op;
-	union {
-		struct {
-			struct expr *left;
-			struct expr *right;
-		};
-		int int_val;
-		char *var;
+	struct {
+		struct expr *left;
+		struct expr *right;
 	};
+	int int_val;
+	char *var;
 } Expr;
 
 typedef struct {
@@ -36,7 +34,9 @@ static Symbol symbol_table[SYMSIZE];
 static int sym_num = 0;
 
 static void cprintint(int);
-static int compile_expr(Expr *);
+static void cglobsym(char *var);
+static int  compile_expr(Expr *);
+static void cstoresym(int reg, char *var);
 
 static const int punct[128] = {
 	['+'] = T_ADD,
@@ -222,6 +222,34 @@ next_token(void)
 /*                               SYMBOL TABLE                               */
 /****************************************************************************/
 
+static int
+find_symbol(char *s)
+{
+	for (int i = 0; i < sym_num; ++i)
+		if (!strcmp(s, symbol_table[i].name)) return i;
+	return -1;
+}
+
+static int
+new_symbol(void)
+{
+	if (sym_num + 1 >= SYMSIZE) {
+		fprintf(stderr, "Symbol table out of space.\n");
+		exit(1);
+	}
+	return sym_num++;
+}
+
+static int
+add_symbol(char *s)
+{
+	int n;
+
+	n = new_symbol();
+	symbol_table[n].name = s;
+	return n;
+}
+
 /****************************************************************************/
 /*                                  PARSER                                  */
 /****************************************************************************/
@@ -237,7 +265,7 @@ assert(int ttype, char *name)
 }
 
 static Expr *
-mkexpr(unsigned int op, Expr *left, Expr *right, int int_val)
+mkexpr(unsigned int op, Expr *left, Expr *right, int int_val, char *var)
 {
 	Expr *e;
 
@@ -247,6 +275,7 @@ mkexpr(unsigned int op, Expr *left, Expr *right, int int_val)
 		exit(1);
 	}
 	e->op      = op;
+	e->var     = var;
 	e->left    = left;
 	e->right   = right;
 	e->int_val = int_val;
@@ -256,13 +285,19 @@ mkexpr(unsigned int op, Expr *left, Expr *right, int int_val)
 static Expr *
 mkeint(int int_val)
 {
-	return mkexpr(INT_LIT, NULL, NULL, int_val);
+	return mkexpr(INT_LIT, NULL, NULL, int_val, NULL);
 }
 
 static Expr *
 mkebin(int op, Expr *left, Expr *right)
 {
-	return mkexpr(op, right, left, 0);
+	return mkexpr(op, right, left, 0, NULL);
+}
+
+static Expr *
+mkevar(char *var)
+{
+	return mkexpr(VAR, NULL, NULL, 0, var);
 }
 
 static Expr *
@@ -274,6 +309,15 @@ prim_expr(void)
 		int n = current_token.int_val;
 		next_token();
 		return mkeint(n);
+	}
+	case T_IDE: {
+		char *s = current_token.ide;
+		if (find_symbol(s) == -1) {
+			fprintf(stderr, "Unknown variable on line %d.\n", linum);
+			exit(1);
+		}
+		next_token();
+		return mkevar(s);
 	}
 	default:
 		fprintf(stderr, "Unexpected token on line %d.\n", linum);
@@ -313,7 +357,7 @@ binexpr(int prec)
 	return left;
 }
 
-void
+static void
 print_stmt(void)
 {
 	Expr *e;
@@ -324,13 +368,37 @@ print_stmt(void)
 	cprintint(compile_expr(e));
 }
 
-void
+static void
 var_decl_stmt(void)
 {
+	char *var;
 
+	assert(T_INT, "int");
+	var = current_token.ide;
+	assert(T_IDE, "identifier");
+	add_symbol(var);
+	assert(T_SEMI, ";");
 }
 
-void
+static void
+var_assign_stmt(void)
+{
+	char *var;
+	Expr *e;
+
+	var = current_token.ide;
+	assert(T_IDE, "identifier");
+	if (find_symbol(var) == -1) {
+		fprintf(stderr, "Unknown variable on line %d.\n", linum);
+		exit(1);
+	}
+	assert(T_EQU, "=");
+	e = binexpr(0);
+	cstoresym(compile_expr(e), var);
+	assert(T_SEMI, ";");
+}
+
+static void
 statement(void)
 {
 
@@ -405,12 +473,22 @@ cdiv(int l, int r)
 }
 
 static int
-cload(int n)
+cloadint(int n)
 {
 	int reg;
 
 	reg = alloc_reg();
 	fprintf(out, "movq $%d, %s\n", n, reglist[reg]);
+	return reg;
+}
+
+static int
+cloadvar(char *var)
+{
+	int reg;
+
+	reg = alloc_reg();
+	fprintf(out, "movq %s(%%rip), %s\n", var, reglist[reg]);
 	return reg;
 }
 
@@ -422,6 +500,18 @@ cprintint(int reg)
 	        "call printint\n", reglist[reg]);
 }
 
+static void
+cstoresym(int reg, char *var)
+{
+	fprintf(out, "movq %s, %s(%%rip)\n", reglist[reg], var);
+}
+
+static void
+cglobsym(char *var)
+{
+	fprintf(out, ".comm %s, 8, 8\n", var);
+}
+
 static int
 compile_expr(Expr *e)
 {
@@ -431,11 +521,12 @@ compile_expr(Expr *e)
 	if (e->left) lreg = compile_expr(e->left);
 
 	switch (e->op) {
+	case VAR: return cloadvar(e->var);
 	case OP_ADD: return cadd(lreg, rreg);
 	case OP_SUB: return csub(lreg, rreg);
 	case OP_MUL: return cmul(lreg, rreg);
 	case OP_DIV: return cdiv(lreg, rreg);
-	case INT_LIT: return cload(e->int_val);
+	case INT_LIT: return cloadint(e->int_val);
 	}
 }
 
