@@ -3,22 +3,37 @@
 #include <ctype.h>
 #include <string.h>
 
+#define SYMSIZE 1024
 
 typedef struct {
 	enum {
-		T_ADD = 1, T_SUB, T_MUL, T_DIV, T_INT, T_SEMI, T_PRINT, T_EOF
+		T_ADD = 1, T_SUB, T_MUL, T_DIV, T_INT_LIT, T_SEMI, T_PRINT,
+		T_EQU, T_INT, T_IDE, T_EOF
 	} type;
 	int int_val;
+	char *ide;
 } Token;
 
 typedef struct expr {
 	enum {
-		OP_ADD, OP_SUB, OP_MUL, OP_DIV, INT_LIT
+		OP_ADD, OP_SUB, OP_MUL, OP_DIV, INT_LIT, VAR
 	} op;
-	struct expr *left;
-	struct expr *right;
-	int int_val;
+	union {
+		struct {
+			struct expr *left;
+			struct expr *right;
+		};
+		int int_val;
+		char *var;
+	};
 } Expr;
+
+typedef struct {
+	char *name;
+} Symbol;
+
+static Symbol symbol_table[SYMSIZE];
+static int sym_num = 0;
 
 static void cprintint(int);
 static int compile_expr(Expr *);
@@ -28,10 +43,11 @@ static const int punct[128] = {
 	['-'] = T_SUB,
 	['*'] = T_MUL,
 	['/'] = T_DIV,
-	[';'] = T_SEMI
+	[';'] = T_SEMI,
+	['='] = T_EQU
 };
 
-static const int token_op[T_INT] = {
+static const int token_op[T_INT_LIT] = {
 	[T_ADD] = OP_ADD,
 	[T_SUB] = OP_SUB,
 	[T_MUL] = OP_MUL,
@@ -43,7 +59,7 @@ static const int prec_op[T_EOF + 1] = {
 	[T_SUB] = 10,
 	[T_MUL] = 20,
 	[T_DIV] = 20,
-	[T_INT] = 0,
+	[T_INT_LIT] = 0,
 	[T_EOF] = 0
 };
 
@@ -78,13 +94,14 @@ skip_space(void)
 }
 
 static Token
-mktoken(int type, int int_val)
+mktoken(int type, int int_val, char *ide)
 {
 	Token t;
 
 	t = (Token) {
 		.int_val = int_val,
-		.type    = type
+		.type    = type,
+		.ide     = ide
 	};
 	return t;
 }
@@ -92,7 +109,7 @@ mktoken(int type, int int_val)
 static Token
 mktint(int int_val)
 {
-	return mktoken(T_INT, int_val);
+	return mktoken(T_INT_LIT, int_val, NULL);
 }
 
 static int
@@ -139,6 +156,8 @@ keyword(char *s)
 	case 'p':
 		if (!strcmp(s, "print")) return T_PRINT;
 		break;
+	case 'i':
+		if (!strcmp(s, "int")) return T_INT;
 	}
 	return 0;
 }
@@ -150,14 +169,13 @@ lex(void)
 
 	skip_space();
 	c = next_char();
-	if (c == EOF) return mktoken(T_EOF, 0);
+	if (c == EOF) return mktoken(T_EOF, 0, NULL);
 	if (isalpha(c) || c == '_') {
 		putback_char(c);
 		char *s = lex_ident();
 		int ttype = keyword(s);
-		if (ttype) return mktoken(ttype, 0);
-		fprintf(stderr, "Unknown symbol: \"%s\"\n", s);
-		exit(1);
+		if (ttype) return mktoken(ttype, 0, NULL);
+		return mktoken(T_IDE, 0, s);
 	}
 	if (isdigit(c)) {
 		int n;
@@ -168,7 +186,7 @@ lex(void)
 		}
 		putback_char(c);
 		return mktint(n);
-	} if(punct[c]) return mktoken(punct[c], 0);
+	} if(punct[c]) return mktoken(punct[c], 0, NULL);
 	if (c == '\n') {
 		++linum;
 		return lex();
@@ -180,7 +198,7 @@ lex(void)
 Token unused_token;
 Token current_token;
 
-void
+static void
 putback_token(Token t)
 {
 	unused_token = t;
@@ -195,13 +213,17 @@ next_token(void)
 		t = lex();
 	else {
 		t = unused_token;
-		unused_token = mktoken(T_EOF, 0);
+		unused_token = mktoken(T_EOF, 0, NULL);
 	}
 	return current_token = t;
 }
 
 /****************************************************************************/
-/*                                    PARSER                                */
+/*                               SYMBOL TABLE                               */
+/****************************************************************************/
+
+/****************************************************************************/
+/*                                  PARSER                                  */
 /****************************************************************************/
 
 static void
@@ -248,7 +270,7 @@ prim_expr(void)
 {
 
 	switch (current_token.type) {
-	case T_INT: {
+	case T_INT_LIT: {
 		int n = current_token.int_val;
 		next_token();
 		return mkeint(n);
@@ -292,16 +314,34 @@ binexpr(int prec)
 }
 
 void
-statement(void)
+print_stmt(void)
 {
 	Expr *e;
 
 	assert(T_PRINT, "print");
-	printf("%d\n", current_token.type);
 	e = binexpr(0);
 	assert(T_SEMI, ";");
 	cprintint(compile_expr(e));
+}
 
+void
+var_decl_stmt(void)
+{
+
+}
+
+void
+statement(void)
+{
+
+	switch (current_token.type) {
+	case T_PRINT:
+		print_stmt();
+		break;
+	default:
+		fprintf(stderr, "Unexpected token.");
+		exit(1);
+	}
 }
 
 /****************************************************************************/
@@ -440,14 +480,15 @@ main(int argc, char *argv[])
 {
 	Expr *e;
 
-	unused_token = mktoken(T_EOF, 0);
+	unused_token = mktoken(T_EOF, 0, NULL);
 	in  = fopen(argv[1], "r");
 	out = fopen("out.s", "w");
 	/* Get the first token */
 	next_token();
-	e = binexpr(0);
 	cprolog();
-	statement();
+	while (current_token.type != T_EOF) {
+		statement();
+	}
 	cepilog();
 	fclose(in);
 	fclose(out);
