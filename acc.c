@@ -7,8 +7,9 @@
 
 typedef struct {
 	enum {
-		T_ADD = 1, T_SUB, T_MUL, T_DIV, T_INT_LIT, T_SEMI, T_PRINT,
-		T_EQU, T_INT, T_IDE, T_EOF
+		T_ADD = 1, T_SUB, T_MUL, T_DIV, T_NEQU, T_GT, T_GE, T_LT, T_LE,
+		T_NOT, T_EQU, T_DEQU, T_INT_LIT, T_SEMI, T_PRINT, T_INT, T_IDE,
+		T_EOF
 	} type;
 	int int_val;
 	char *ide;
@@ -16,7 +17,8 @@ typedef struct {
 
 typedef struct expr {
 	enum {
-		OP_ADD, OP_SUB, OP_MUL, OP_DIV, INT_LIT, VAR
+		OP_ADD = 1, OP_SUB, OP_MUL, OP_DIV, OP_NEQU, OP_GT, OP_GE, OP_LT,
+		OP_LE, OP_NOT, OP_EQU, INT_LIT, VAR
 	} op;
 	struct {
 		struct expr *left;
@@ -44,23 +46,36 @@ static const int punct[128] = {
 	['*'] = T_MUL,
 	['/'] = T_DIV,
 	[';'] = T_SEMI,
-	['='] = T_EQU
+	['='] = T_EQU,
+	['<'] = T_LT,
+	['>'] = T_GT,
+	['!'] = T_NOT
 };
 
-static const int token_op[T_INT_LIT] = {
-	[T_ADD] = OP_ADD,
-	[T_SUB] = OP_SUB,
-	[T_MUL] = OP_MUL,
-	[T_DIV] = OP_DIV
+static const int dpunct[T_EOF + 1][128] = {
+	[T_EQU] = {
+		['='] = T_DEQU
+	},
+	[T_GT] = {
+		['='] = T_GE
+	},
+	[T_LT] = {
+		['='] = T_LE
+	}
 };
 
 static const int prec_op[T_EOF + 1] = {
-	[T_ADD] = 10,
-	[T_SUB] = 10,
-	[T_MUL] = 20,
-	[T_DIV] = 20,
-	[T_INT_LIT] = 0,
-	[T_EOF] = 0
+	[T_ADD] = 11,
+	[T_SUB] = 11,
+	[T_MUL] = 12,
+	[T_DIV] = 12,
+	[T_GT]  = 10,
+	[T_LT]  = 10,
+	[T_GE]  = 10,
+	[T_LE]  = 10,
+	[T_EQU] = 9,
+	[T_EOF] = 0,
+	[T_INT_LIT] = 0
 };
 
 FILE *in;
@@ -186,7 +201,14 @@ lex(void)
 		}
 		putback_char(c);
 		return mktint(n);
-	} if(punct[c]) return mktoken(punct[c], 0, NULL);
+	} if (punct[c]) {
+		int t = punct[c];
+		if (dpunct[t][c = next_char()])
+			t = dpunct[t][c = next_char()];
+		else
+			putback_char(c);
+		return mktoken(t, 0, NULL);
+	}
 	if (c == '\n') {
 		++linum;
 		return lex();
@@ -325,7 +347,7 @@ prim_expr(void)
 	}
 }
 
-int
+static int
 op_precedence(int op)
 {
 	int op_p;
@@ -333,6 +355,14 @@ op_precedence(int op)
 	op_p = prec_op[op];
 	if (op_p != 0) return op_p;
 	fprintf(stderr, "Syntax error on line %d, unxepected token.\n", linum);
+	exit(1);
+}
+
+static int
+token_op(int op)
+{
+	if (op && op < T_INT_LIT) return op;
+	fprintf(stderr, "Syntax error.\n");
 	exit(1);
 }
 
@@ -350,7 +380,7 @@ binexpr(int prec)
 	while (op_precedence(ttype) > prec) {
 		next_token();
 		right = binexpr(prec_op[ttype]);
-		left = mkebin(token_op[ttype], left, right);
+		left = mkebin(token_op(ttype), left, right);
 		if ((ttype = current_token.type) == T_SEMI)
 			return left;
 	}
@@ -377,6 +407,7 @@ var_decl_stmt(void)
 	var = current_token.ide;
 	assert(T_IDE, "identifier");
 	add_symbol(var);
+	cglobsym(var);
 	assert(T_SEMI, ";");
 }
 
@@ -406,8 +437,14 @@ statement(void)
 	case T_PRINT:
 		print_stmt();
 		break;
+	case T_INT:
+		var_decl_stmt();
+		break;
+	case T_IDE:
+		var_assign_stmt();
+		break;
 	default:
-		fprintf(stderr, "Unexpected token.");
+		fprintf(stderr, "Unexpected token.\n");
 		exit(1);
 	}
 }
@@ -417,15 +454,15 @@ statement(void)
 /****************************************************************************/
 
 static char *reglist[4] = { "%r8", "%r9", "%r10", "%r11" };
-static int freeregs[4]  = { 0, 0, 0, 0 };
+static int free_regs[4]  = { 0, 0, 0, 0 };
 FILE *out;
 
 static int
 alloc_reg()
 {
 	for (int i = 0; i < 4; ++i)
-		if (!freeregs[i]) {
-			freeregs[i] = 1;
+		if (!free_regs[i]) {
+			free_regs[i] = 1;
 			return i;
 		}
 	fprintf(stderr, "Unable to allocate a register");
@@ -435,7 +472,7 @@ alloc_reg()
 static void
 free_reg(int reg)
 {
-	freeregs[reg] = 0;
+	free_regs[reg] = 0;
 }
 
 static int
@@ -469,6 +506,19 @@ cdiv(int l, int r)
 	        "cqo\n"
 	        "idivq %s\n"
 	        "movq %%rax, %s\n", reglist[l], reglist[r], reglist[l]);
+	free_reg(r);
+	return l;
+}
+
+static int
+ccompare(int l, int r, char *set)
+{
+	fprintf(out,
+		"cmpq %s, %s\n"
+		"%s %sb\n"
+		"andq $255, %s\n",
+		reglist[l], reglist[r], set, reglist[l], reglist[l]);
+	free_reg(r);
 	return l;
 }
 
@@ -522,20 +572,34 @@ compile_expr(Expr *e)
 
 	switch (e->op) {
 	case VAR: return cloadvar(e->var);
+	case OP_GT: return ccompare(lreg, rreg, "setg");
+	case OP_GE: return ccompare(lreg, rreg, "setge");
+	case OP_LT: return ccompare(lreg, rreg, "setl");
+	case OP_LE: return ccompare(lreg, rreg, "setle");
+	case OP_EQU: return ccompare(lreg, rreg, "sete");
+	case OP_NEQU: return ccompare(lreg, rreg, "setne");
 	case OP_ADD: return cadd(lreg, rreg);
 	case OP_SUB: return csub(lreg, rreg);
 	case OP_MUL: return cmul(lreg, rreg);
 	case OP_DIV: return cdiv(lreg, rreg);
 	case INT_LIT: return cloadint(e->int_val);
+	default: exit(1);
 	}
 }
 
 static void
-cprolog()
+cfree_regs(void)
+{
+	for (int i = 0; i < 4; ++i)
+		free_reg(i);
+}
+
+static void
+cprolog(void)
 {
 	fputs(".text\n"
 	      ".LC0:\n"
-	      ".string\t\"%d\\n\"\n"
+	      ".string \"%d\\n\"\n"
 	      "printint:\n"
 	      "pushq %rbp\n"
 	      "movq %rsp, %rbp\n"
@@ -579,6 +643,7 @@ main(int argc, char *argv[])
 	cprolog();
 	while (current_token.type != T_EOF) {
 		statement();
+		cfree_regs();
 	}
 	cepilog();
 	fclose(in);
