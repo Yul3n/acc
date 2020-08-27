@@ -8,8 +8,8 @@
 typedef struct {
 	enum {
 		T_ADD = 1, T_SUB, T_MUL, T_DIV, T_NEQU, T_GT, T_GE, T_LT, T_LE,
-		T_NOT, T_EQU, T_DEQU, T_INT_LIT, T_SEMI, T_PRINT, T_INT, T_IDE,
-		T_EOF
+		T_NOT, T_DEQU, T_INT_LIT, T_EQU, T_SEMI, T_PRINT, T_INT, T_IF,
+		T_ELSE, T_IDE, T_LBRACK, T_RBRACK, T_LPAR, T_RPAR, T_EOF
 	} type;
 	int int_val;
 	char *ide;
@@ -49,7 +49,11 @@ static const int punct[128] = {
 	['='] = T_EQU,
 	['<'] = T_LT,
 	['>'] = T_GT,
-	['!'] = T_NOT
+	['!'] = T_NOT,
+	['{'] = T_LBRACK,
+	['}'] = T_RBRACK,
+	['('] = T_LPAR,
+	[')'] = T_RPAR
 };
 
 static const int dpunct[T_EOF + 1][128] = {
@@ -65,16 +69,16 @@ static const int dpunct[T_EOF + 1][128] = {
 };
 
 static const int prec_op[T_EOF + 1] = {
-	[T_ADD] = 11,
-	[T_SUB] = 11,
-	[T_MUL] = 12,
-	[T_DIV] = 12,
-	[T_GT]  = 10,
-	[T_LT]  = 10,
-	[T_GE]  = 10,
-	[T_LE]  = 10,
-	[T_EQU] = 9,
-	[T_EOF] = 0,
+	[T_GT]   = 10,
+	[T_LT]   = 10,
+	[T_GE]   = 10,
+	[T_LE]   = 10,
+	[T_ADD]  = 11,
+	[T_SUB]  = 11,
+	[T_MUL]  = 12,
+	[T_DIV]  = 12,
+	[T_EOF]  = 0,
+	[T_DEQU] = 9,
 	[T_INT_LIT] = 0
 };
 
@@ -168,11 +172,15 @@ keyword(char *s)
 	/* Switch on the first later to avoid wasting a lot of time on unuseful
 	 * comparaisons. */
 	switch (*s) {
+	case 'e':
+		if (!strcmp(s, "else")) return T_ELSE;
+		break;
 	case 'p':
 		if (!strcmp(s, "print")) return T_PRINT;
 		break;
 	case 'i':
 		if (!strcmp(s, "int")) return T_INT;
+		if (!strcmp(s, "if")) return T_IF;
 	}
 	return 0;
 }
@@ -204,7 +212,7 @@ lex(void)
 	} if (punct[c]) {
 		int t = punct[c];
 		if (dpunct[t][c = next_char()])
-			t = dpunct[t][c = next_char()];
+			t = dpunct[t][c];
 		else
 			putback_char(c);
 		return mktoken(t, 0, NULL);
