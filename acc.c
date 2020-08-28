@@ -108,7 +108,7 @@ skip_space(void)
 {
 	int c;
 
-	while ((c = next_char()) == ' ');
+	while ((c = next_char()) == ' ' || c == '\t');
 	putback_char(c);
 }
 
@@ -288,7 +288,7 @@ static void
 assert(int ttype, char *name)
 {
 	if (current_token.type != ttype) {
-		fprintf(stderr, "Expected: %s.\n", name);
+		fprintf(stderr, "Error: expected: %s.\n", name);
 		exit(1);
 	}
 	next_token();
@@ -397,7 +397,7 @@ binexpr(int prec)
 
 	left = prim_expr();
 	ttype = current_token.type;
-	if (current_token.type == T_SEMI)
+	if (current_token.type == T_SEMI || current_token.type == T_RPAR)
 		return left;
 
 	while (op_precedence(ttype) > prec) {
@@ -500,7 +500,7 @@ if_stmt(void)
 	assert(T_IF, "if");
 	assert(T_LPAR, "(");
 	cond = binexpr(0);
-	assert(T_LPAR, ")");
+	assert(T_RPAR, ")");
 	ife = blk_statements();
 	if (current_token.type == T_ELSE) {
 		assert(T_ELSE, "else");
@@ -598,7 +598,7 @@ ccompare(int l, int r, char *set)
 		"cmpq %s, %s\n"
 		"%s %sb\n"
 		"andq $255, %s\n",
-		reglist[l], reglist[r], set, reglist[l], reglist[l]);
+		reglist[r], reglist[l], set, reglist[l], reglist[l]);
 	cfree_reg(r);
 	return l;
 }
@@ -646,9 +646,27 @@ cglobsym(char *var)
 static void
 cif(Expr *e)
 {
-	int label_end, label_else, creg;
+	int label_end, label_else, creg, treg;
 
+	treg = calloc_reg();
+	label_end = cnew_label();
 	creg = compile_expr(e->condition);
+	fprintf(out,
+		"movq $0, %s\n"
+		"cmpq %s, %s\n"
+		"je L%d\n",
+		reglist[treg], reglist[treg], reglist[creg], label_end);
+	cfree_reg(treg);
+	compile_expr(e->left);
+	if (e->right) {
+		label_else = cnew_label();
+		fprintf(out,
+			"jmp L%d\n", label_else);
+		clabel(label_end);
+		compile_expr(e->right);
+		clabel(label_else);
+	} else
+		clabel(label_end);
 }
 
 static int
@@ -663,9 +681,13 @@ compile_expr(Expr *e)
 		cfree_regs();
 		return -1;
 	}
+	if (e->op == IF) {
+		cif(e);
+		return -1;
+	}
 	if (e->right) rreg = compile_expr(e->right);
 	if (e->op == ASSIGN) {
-		cstoresym(rreg, e->var);
+		cstoresym(rreg, e->left->var);
 		return rreg;
 	}
 	if (e->left) lreg = compile_expr(e->left);

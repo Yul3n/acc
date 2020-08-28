@@ -1,6 +1,13 @@
-print 5;
-int a;
-int b;
-b = 6;
-a = 1 == 1;
-print a;
+{
+  int i; int j;
+    i=6; j=12;
+	print i > j;
+	if (i < j) {
+	    print i;
+
+} else {
+    print j;
+
+}
+
+}
