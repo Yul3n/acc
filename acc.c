@@ -18,14 +18,13 @@ typedef struct {
 typedef struct expr {
 	enum {
 		OP_ADD = 1, OP_SUB, OP_MUL, OP_DIV, OP_NEQU, OP_GT, OP_GE, OP_LT,
-		OP_LE, OP_NOT, OP_EQU, INT_LIT, VAR
+		OP_LE, OP_NOT, OP_EQU, ASSIGN, PRINT, INT_LIT, VAR, IF
 	} op;
-	struct {
-		struct expr *left;
-		struct expr *right;
-	};
+	struct expr *left;
+	struct expr *right;
 	int int_val;
 	char *var;
+	struct expr *condition;
 } Expr;
 
 typedef struct {
@@ -321,13 +320,28 @@ mkeint(int int_val)
 static Expr *
 mkebin(int op, Expr *left, Expr *right)
 {
-	return mkexpr(op, right, left, 0, NULL);
+	return mkexpr(op, left, right, 0, NULL);
+}
+
+static Expr *
+mkeun(int op, Expr *e)
+{
+	return mkexpr(op, e, NULL, 0, NULL);
 }
 
 static Expr *
 mkevar(char *var)
 {
 	return mkexpr(VAR, NULL, NULL, 0, var);
+}
+
+static Expr *
+mkeif(Expr *condition, Expr *ife, Expr *elsee)
+{
+	Expr *e;
+	e = mkebin(IF, ife, elsee);
+	e->condition = condition;
+	return e;
 }
 
 static Expr *
@@ -395,7 +409,7 @@ binexpr(int prec)
 	return left;
 }
 
-static void
+static Expr *
 print_stmt(void)
 {
 	Expr *e;
@@ -404,6 +418,7 @@ print_stmt(void)
 	e = binexpr(0);
 	assert(T_SEMI, ";");
 	cprintint(compile_expr(e));
+	return mkeun(PRINT, e);
 }
 
 static void
@@ -419,11 +434,11 @@ var_decl_stmt(void)
 	assert(T_SEMI, ";");
 }
 
-static void
+static Expr *
 var_assign_stmt(void)
 {
 	char *var;
-	Expr *e;
+	Expr *right, *left;
 
 	var = current_token.ide;
 	assert(T_IDE, "identifier");
@@ -431,10 +446,12 @@ var_assign_stmt(void)
 		fprintf(stderr, "Unknown variable on line %d.\n", linum);
 		exit(1);
 	}
+	left = mkevar(var);
 	assert(T_EQU, "=");
-	e = binexpr(0);
-	cstoresym(compile_expr(e), var);
+	right = binexpr(0);
+	cstoresym(compile_expr(right), var);
 	assert(T_SEMI, ";");
+	return mkebin(ASSIGN, left, right);
 }
 
 static void
