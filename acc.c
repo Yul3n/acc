@@ -18,13 +18,13 @@ typedef struct {
 typedef struct expr {
 	enum {
 		OP_ADD = 1, OP_SUB, OP_MUL, OP_DIV, OP_NEQU, OP_GT, OP_GE, OP_LT,
-		OP_LE, OP_NOT, OP_EQU, ASSIGN, PRINT, INT_LIT, VAR, IF
+		OP_LE, OP_NOT, OP_EQU, ASSIGN, PRINT, INT_LIT, VAR, IF, DEXPR
 	} op;
 	struct expr *left;
+	struct expr *condition;
 	struct expr *right;
 	int int_val;
 	char *var;
-	struct expr *condition;
 } Expr;
 
 typedef struct {
@@ -474,6 +474,43 @@ statement(void)
 	}
 }
 
+static Expr *
+blk_statements(void)
+{
+	Expr *left, *e;
+
+	e = left = NULL;
+	assert(T_LBRACK, "{");
+	for (;;) {
+		switch (current_token.type) {
+		case T_PRINT:
+			e = print_stmt();
+			break;
+		case T_INT:
+			var_decl_stmt();
+			e = NULL;
+			break;
+		case T_IDE:
+			e = var_assign_stmt();
+			break;
+		case T_RBRACK:
+			assert(T_RBRACK, "}");
+			return left;
+			break;
+		default:
+			fprintf(stderr, "Unexpected token.\n");
+			exit(1);
+		}
+		if (e) {
+			if (left)
+				left = mkebin(DEXPR, left, e);
+			else
+				left = e;
+		}
+	}
+}
+
+
 /****************************************************************************/
 /*                              CODE GENERATION                             */
 /****************************************************************************/
@@ -593,6 +630,10 @@ compile_expr(Expr *e)
 	int lreg, rreg;
 
 	if (e->right) rreg = compile_expr(e->right);
+	if (e->op == ASSIGN) {
+		cstoresym(rreg, e->var);
+		return rreg;
+	}
 	if (e->left) lreg = compile_expr(e->left);
 
 	switch (e->op) {
@@ -608,6 +649,7 @@ compile_expr(Expr *e)
 	case OP_MUL: return cmul(lreg, rreg);
 	case OP_DIV: return cdiv(lreg, rreg);
 	case INT_LIT: return cloadint(e->int_val);
+	case PRINT: cprintint(lreg); return -1;
 	default: exit(1);
 	}
 }
