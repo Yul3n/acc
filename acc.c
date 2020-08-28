@@ -35,9 +35,10 @@ static Symbol symbol_table[SYMSIZE];
 static int sym_num = 0;
 
 static void cprintint(int);
-static void cglobsym(char *var);
+static void cglobsym(char *);
 static int  compile_expr(Expr *);
-static void cstoresym(int reg, char *var);
+static void cstoresym(int, char *);
+static Expr *if_stmt(void);
 
 static const int punct[128] = {
 	['+'] = T_ADD,
@@ -403,7 +404,7 @@ binexpr(int prec)
 		next_token();
 		right = binexpr(prec_op[ttype]);
 		left = mkebin(token_op(ttype), left, right);
-		if ((ttype = current_token.type) == T_SEMI)
+		if ((ttype = current_token.type) == T_SEMI || ttype == T_RPAR)
 			return left;
 	}
 	return left;
@@ -417,7 +418,6 @@ print_stmt(void)
 	assert(T_PRINT, "print");
 	e = binexpr(0);
 	assert(T_SEMI, ";");
-	cprintint(compile_expr(e));
 	return mkeun(PRINT, e);
 }
 
@@ -449,29 +449,8 @@ var_assign_stmt(void)
 	left = mkevar(var);
 	assert(T_EQU, "=");
 	right = binexpr(0);
-	cstoresym(compile_expr(right), var);
 	assert(T_SEMI, ";");
 	return mkebin(ASSIGN, left, right);
-}
-
-static void
-statement(void)
-{
-
-	switch (current_token.type) {
-	case T_PRINT:
-		print_stmt();
-		break;
-	case T_INT:
-		var_decl_stmt();
-		break;
-	case T_IDE:
-		var_assign_stmt();
-		break;
-	default:
-		fprintf(stderr, "Unexpected token.\n");
-		exit(1);
-	}
 }
 
 static Expr *
@@ -493,10 +472,12 @@ blk_statements(void)
 		case T_IDE:
 			e = var_assign_stmt();
 			break;
+		case T_IF:
+			e = if_stmt();
+			break;
 		case T_RBRACK:
 			assert(T_RBRACK, "}");
 			return left;
-			break;
 		default:
 			fprintf(stderr, "Unexpected token.\n");
 			exit(1);
@@ -510,6 +491,24 @@ blk_statements(void)
 	}
 }
 
+static Expr *
+if_stmt(void)
+{
+	Expr *cond, *ife, *elsee;
+
+	elsee = NULL;
+	assert(T_IF, "if");
+	assert(T_LPAR, "(");
+	cond = binexpr(0);
+	assert(T_LPAR, ")");
+	ife = blk_statements();
+	if (current_token.type == T_ELSE) {
+		assert(T_ELSE, "else");
+		elsee = blk_statements();
+	}
+	return mkeif(cond, ife, elsee);
+}
+
 
 /****************************************************************************/
 /*                              CODE GENERATION                             */
@@ -517,10 +516,11 @@ blk_statements(void)
 
 static char *reglist[4] = { "%r8", "%r9", "%r10", "%r11" };
 static int free_regs[4]  = { 0, 0, 0, 0 };
-FILE *out;
+static FILE *out;
+static int nlabel = 0;
 
 static int
-alloc_reg()
+calloc_reg(void)
 {
 	for (int i = 0; i < 4; ++i)
 		if (!free_regs[i]) {
@@ -532,23 +532,42 @@ alloc_reg()
 }
 
 static void
-free_reg(int reg)
+cfree_reg(int reg)
 {
 	free_regs[reg] = 0;
+}
+
+static void
+cfree_regs(void)
+{
+	for (int i = 0; i < 4; ++i)
+		cfree_reg(i);
+}
+
+static int
+cnew_label(void)
+{
+	return ++nlabel;
+}
+
+static void
+clabel(int l)
+{
+	fprintf(out, "L%d:\n", l);
 }
 
 static int
 cadd(int l, int r)
 {
 	fprintf(out, "addq %s, %s\n", reglist[r], reglist[l]);
-	free_reg(r);
+	cfree_reg(r);
 	return l;
 }
 static int
 csub(int l, int r)
 {
 	fprintf(out, "subq %s, %s\n", reglist[r], reglist[l]);
-	free_reg(r);
+	cfree_reg(r);
 	return l;
 }
 
@@ -556,7 +575,7 @@ static int
 cmul(int l, int r)
 {
 	fprintf(out, "imulq %s, %s\n", reglist[r], reglist[l]);
-	free_reg(r);
+	cfree_reg(r);
 	return l;
 }
 
@@ -568,7 +587,7 @@ cdiv(int l, int r)
 	        "cqo\n"
 	        "idivq %s\n"
 	        "movq %%rax, %s\n", reglist[l], reglist[r], reglist[l]);
-	free_reg(r);
+	cfree_reg(r);
 	return l;
 }
 
@@ -580,7 +599,7 @@ ccompare(int l, int r, char *set)
 		"%s %sb\n"
 		"andq $255, %s\n",
 		reglist[l], reglist[r], set, reglist[l], reglist[l]);
-	free_reg(r);
+	cfree_reg(r);
 	return l;
 }
 
@@ -589,7 +608,7 @@ cloadint(int n)
 {
 	int reg;
 
-	reg = alloc_reg();
+	reg = calloc_reg();
 	fprintf(out, "movq $%d, %s\n", n, reglist[reg]);
 	return reg;
 }
@@ -599,7 +618,7 @@ cloadvar(char *var)
 {
 	int reg;
 
-	reg = alloc_reg();
+	reg = calloc_reg();
 	fprintf(out, "movq %s(%%rip), %s\n", var, reglist[reg]);
 	return reg;
 }
@@ -624,11 +643,26 @@ cglobsym(char *var)
 	fprintf(out, ".comm %s, 8, 8\n", var);
 }
 
+static void
+cif(Expr *e)
+{
+	int label_end, label_else, creg;
+
+	creg = compile_expr(e->condition);
+}
+
 static int
 compile_expr(Expr *e)
 {
 	int lreg, rreg;
 
+	if (e->op == DEXPR) {
+		compile_expr(e->left);
+		cfree_regs();
+		compile_expr(e->right);
+		cfree_regs();
+		return -1;
+	}
 	if (e->right) rreg = compile_expr(e->right);
 	if (e->op == ASSIGN) {
 		cstoresym(rreg, e->var);
@@ -652,13 +686,6 @@ compile_expr(Expr *e)
 	case PRINT: cprintint(lreg); return -1;
 	default: exit(1);
 	}
-}
-
-static void
-cfree_regs(void)
-{
-	for (int i = 0; i < 4; ++i)
-		free_reg(i);
 }
 
 static void
@@ -708,10 +735,7 @@ main(int argc, char *argv[])
 	/* Get the first token */
 	next_token();
 	cprolog();
-	while (current_token.type != T_EOF) {
-		statement();
-		cfree_regs();
-	}
+	compile_expr(blk_statements());
 	cepilog();
 	fclose(in);
 	fclose(out);
