@@ -1,13 +1,14 @@
 {
-  int i; int j;
-    i=6; j=12;
+	int i; int j;
+    i = 6; j = 12;
 	print i > j;
 	if (i < j) {
-	    print i;
-
-} else {
-    print j;
-
-}
-
+		print i;
+	} else {
+		print j;
+	}
+	while (i < 12) {
+		print i;
+		i = i + 1;
+	}
 }

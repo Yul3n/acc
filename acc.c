@@ -9,7 +9,8 @@ typedef struct {
 	enum {
 		T_ADD = 1, T_SUB, T_MUL, T_DIV, T_NEQU, T_GT, T_GE, T_LT, T_LE,
 		T_NOT, T_DEQU, T_INT_LIT, T_EQU, T_SEMI, T_PRINT, T_INT, T_IF,
-		T_ELSE, T_IDE, T_LBRACK, T_RBRACK, T_LPAR, T_RPAR, T_EOF
+		T_ELSE, T_WHILE, T_FOR, T_IDE, T_LBRACK, T_RBRACK, T_LPAR,
+		T_RPAR, T_EOF
 	} type;
 	int int_val;
 	char *ide;
@@ -18,7 +19,8 @@ typedef struct {
 typedef struct expr {
 	enum {
 		OP_ADD = 1, OP_SUB, OP_MUL, OP_DIV, OP_NEQU, OP_GT, OP_GE, OP_LT,
-		OP_LE, OP_NOT, OP_EQU, ASSIGN, PRINT, INT_LIT, VAR, IF, DEXPR
+		OP_LE, OP_NOT, OP_EQU, ASSIGN, PRINT, INT_LIT, VAR, IF, WHILE,
+		DEXPR
 	} op;
 	struct expr *left;
 	struct expr *condition;
@@ -39,6 +41,7 @@ static void cglobsym(char *);
 static int  compile_expr(Expr *);
 static void cstoresym(int, char *);
 static Expr *if_stmt(void);
+static Expr *while_stmt(void);
 
 static const int punct[128] = {
 	['+'] = T_ADD,
@@ -175,12 +178,17 @@ keyword(char *s)
 	case 'e':
 		if (!strcmp(s, "else")) return T_ELSE;
 		break;
-	case 'p':
-		if (!strcmp(s, "print")) return T_PRINT;
-		break;
+	case 'f':
+		if (!strcmp(s, "for")) return T_FOR;
 	case 'i':
 		if (!strcmp(s, "int")) return T_INT;
 		if (!strcmp(s, "if")) return T_IF;
+		break;
+	case 'p':
+		if (!strcmp(s, "print")) return T_PRINT;
+		break;
+	case 'w':
+		if (!strcmp(s, "while")) return T_WHILE;
 	}
 	return 0;
 }
@@ -346,6 +354,16 @@ mkeif(Expr *condition, Expr *ife, Expr *elsee)
 }
 
 static Expr *
+mkewhile(Expr *condition, Expr *body)
+{
+	Expr *e;
+	e = mkeun(WHILE, body);
+	e->condition = condition;
+	return e;
+}
+
+
+static Expr *
 prim_expr(void)
 {
 
@@ -475,6 +493,9 @@ blk_statements(void)
 		case T_IF:
 			e = if_stmt();
 			break;
+		case T_WHILE:
+			e = while_stmt();
+			break;
 		case T_RBRACK:
 			assert(T_RBRACK, "}");
 			return left;
@@ -507,6 +528,19 @@ if_stmt(void)
 		elsee = blk_statements();
 	}
 	return mkeif(cond, ife, elsee);
+}
+
+static Expr *
+while_stmt(void)
+{
+	Expr *cond, *body;
+
+	assert(T_WHILE, "while");
+	assert(T_LPAR, "(");
+	cond = binexpr(0);
+	assert(T_RPAR, ")");
+	body = blk_statements();
+	return mkewhile(cond, body);
 }
 
 
@@ -669,6 +703,28 @@ cif(Expr *e)
 		clabel(label_end);
 }
 
+static void
+cwhile(Expr *e)
+{
+	int label_end, label_start, creg, treg;
+
+	treg = calloc_reg();
+	label_start = cnew_label();
+	label_end = cnew_label();
+	clabel(label_start);
+	creg = compile_expr(e->condition);
+	fprintf(out,
+		"movq $0, %s\n"
+		"cmpq %s, %s\n"
+		"je L%d\n",
+		reglist[treg], reglist[treg], reglist[creg], label_end);
+	cfree_reg(treg);
+	compile_expr(e->left);
+	fprintf(out, "jmp L%d\n", label_start);
+	clabel(label_end);
+}
+
+
 static int
 compile_expr(Expr *e)
 {
@@ -683,6 +739,10 @@ compile_expr(Expr *e)
 	}
 	if (e->op == IF) {
 		cif(e);
+		return -1;
+	}
+	if (e->op == WHILE) {
+		cwhile(e);
 		return -1;
 	}
 	if (e->right) rreg = compile_expr(e->right);
