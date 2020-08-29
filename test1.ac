@@ -7,8 +7,7 @@
 	} else {
 		print j;
 	}
-	while (i < 12) {
+	for (i = 0; i < 10; i = i + 1) {
 		print i;
-		i = i + 1;
 	}
 }

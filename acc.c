@@ -42,6 +42,7 @@ static int  compile_expr(Expr *);
 static void cstoresym(int, char *);
 static Expr *if_stmt(void);
 static Expr *while_stmt(void);
+static Expr *for_stmt(void);
 
 static const int punct[128] = {
 	['+'] = T_ADD,
@@ -435,7 +436,6 @@ print_stmt(void)
 
 	assert(T_PRINT, "print");
 	e = binexpr(0);
-	assert(T_SEMI, ";");
 	return mkeun(PRINT, e);
 }
 
@@ -467,8 +467,30 @@ var_assign_stmt(void)
 	left = mkevar(var);
 	assert(T_EQU, "=");
 	right = binexpr(0);
-	assert(T_SEMI, ";");
 	return mkebin(ASSIGN, left, right);
+}
+
+static Expr *
+statement(void)
+{
+	switch (current_token.type) {
+	case T_PRINT:
+		return print_stmt();
+	case T_INT:
+		var_decl_stmt();
+		return NULL;
+	case T_IDE:
+		return var_assign_stmt();
+	case T_IF:
+		return if_stmt();
+	case T_WHILE:
+		return while_stmt();
+	case T_FOR:
+		return for_stmt();
+	default:
+		fprintf(stderr, "Unexpected token.\n");
+		exit(1);
+	}
 }
 
 static Expr *
@@ -480,28 +502,13 @@ blk_statements(void)
 	assert(T_LBRACK, "{");
 	for (;;) {
 		switch (current_token.type) {
-		case T_PRINT:
-			e = print_stmt();
-			break;
-		case T_INT:
-			var_decl_stmt();
-			e = NULL;
-			break;
-		case T_IDE:
-			e = var_assign_stmt();
-			break;
-		case T_IF:
-			e = if_stmt();
-			break;
-		case T_WHILE:
-			e = while_stmt();
-			break;
 		case T_RBRACK:
 			assert(T_RBRACK, "}");
 			return left;
 		default:
-			fprintf(stderr, "Unexpected token.\n");
-			exit(1);
+			e = statement();
+			if (e && (e->op == PRINT || e->op == ASSIGN))
+				assert(T_SEMI, ";");
 		}
 		if (e) {
 			if (left)
@@ -541,6 +548,26 @@ while_stmt(void)
 	assert(T_RPAR, ")");
 	body = blk_statements();
 	return mkewhile(cond, body);
+}
+
+static Expr *
+for_stmt(void)
+{
+	Expr *pre, *post, *cond, *body, *e;
+
+	assert(T_FOR, "while");
+	assert(T_LPAR, "(");
+	pre = statement();
+	assert(T_SEMI, ";");
+	cond = binexpr(0);
+	assert(T_SEMI, ";");
+	post = statement();
+	assert(T_RPAR, ")");
+	body = blk_statements();
+	e = mkebin(DEXPR, body, post);
+	e = mkewhile(cond, e);
+	return mkebin(DEXPR, pre, e);
+
 }
 
 
