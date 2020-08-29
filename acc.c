@@ -775,26 +775,49 @@ cwhile(Expr *e)
 	clabel(label_end);
 }
 
+static void
+cfun_prolog(char *name)
+{
+	fprintf(out,
+		".globl %s\n"
+		".type %s, @function\n"
+		"%s:\n"
+		"pushq %%rbp\n"
+		"movq %%rsp, %%rbp\n", name, name, name);
+}
+
+static void
+cfun_epilog(void)
+{
+	fputs("movl $0, %eax\n"
+	      "popq %rbp\n"
+	      "ret\n", out);
+}
 
 static int
 compile_expr(Expr *e)
 {
 	int lreg, rreg;
 
-	if (e->op == DEXPR) {
+	switch (e->op) {
+	case DEXPR:
 		compile_expr(e->left);
 		cfree_regs();
 		compile_expr(e->right);
 		cfree_regs();
 		return -1;
-	}
-	if (e->op == IF) {
+	case IF:
 		cif(e);
 		return -1;
-	}
-	if (e->op == WHILE) {
+	case WHILE:
 		cwhile(e);
 		return -1;
+	case FUN_DECL:
+		cfun_prolog(e->var);
+		compile_expr(e->left);
+		cfun_epilog();
+		return -1;
+	default: break;
 	}
 	if (e->right) rreg = compile_expr(e->right);
 	if (e->op == ASSIGN) {
@@ -839,12 +862,7 @@ cprolog(void)
 	      "call printf@PLT\n"
 	      "nop\n"
 	      "leave\n"
-	      "ret\n"
-	      ".globl main\n"
-	      ".type main, @function\n"
-	      "main:\n"
-	      "pushq %rbp\n"
-	      "movq %rsp, %rbp\n",
+	      "ret\n",
 	      out);
 }
 
@@ -867,7 +885,10 @@ main(int argc, char *argv[])
 	/* Get the first token */
 	next_token();
 	cprolog();
-	compile_expr(blk_statements());
+	for (;;) {
+		compile_expr(fun_decl());
+		if (current_token.type == T_EOF) break;
+	}
 	cepilog();
 	fclose(in);
 	fclose(out);
