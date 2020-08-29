@@ -9,8 +9,8 @@ typedef struct {
 	enum {
 		T_ADD = 1, T_SUB, T_MUL, T_DIV, T_NEQU, T_GT, T_GE, T_LT, T_LE,
 		T_NOT, T_DEQU, T_INT_LIT, T_EQU, T_SEMI, T_PRINT, T_INT, T_IF,
-		T_ELSE, T_WHILE, T_FOR, T_IDE, T_LBRACK, T_RBRACK, T_LPAR,
-		T_RPAR, T_EOF
+		T_ELSE, T_WHILE, T_FOR, T_VOID, T_IDE, T_LBRACK, T_RBRACK,
+		T_LPAR, T_RPAR, T_EOF
 	} type;
 	int int_val;
 	char *ide;
@@ -20,7 +20,7 @@ typedef struct expr {
 	enum {
 		OP_ADD = 1, OP_SUB, OP_MUL, OP_DIV, OP_NEQU, OP_GT, OP_GE, OP_LT,
 		OP_LE, OP_NOT, OP_EQU, ASSIGN, PRINT, INT_LIT, VAR, IF, WHILE,
-		DEXPR
+		DEXPR, FUN_DECL
 	} op;
 	struct expr *left;
 	struct expr *condition;
@@ -43,6 +43,7 @@ static void cstoresym(int, char *);
 static Expr *if_stmt(void);
 static Expr *while_stmt(void);
 static Expr *for_stmt(void);
+static Expr *fun_decl(void);
 
 static const int punct[128] = {
 	['+'] = T_ADD,
@@ -86,9 +87,9 @@ static const int prec_op[T_EOF + 1] = {
 	[T_INT_LIT] = 0
 };
 
-FILE *in;
-int linum = 1;
-int unused_char = 0;
+static FILE *in;
+static int linum = 1;
+static int unused_char = 0;
 
 static void
 putback_char(int c)
@@ -188,6 +189,8 @@ keyword(char *s)
 	case 'p':
 		if (!strcmp(s, "print")) return T_PRINT;
 		break;
+	case 'v':
+		if (!strcmp(s, "void")) return T_VOID;
 	case 'w':
 		if (!strcmp(s, "while")) return T_WHILE;
 	}
@@ -234,8 +237,8 @@ lex(void)
 	exit(1);
 }
 
-Token unused_token;
-Token current_token;
+static Token unused_token;
+static Token current_token;
 
 static void
 putback_token(Token t)
@@ -252,7 +255,7 @@ next_token(void)
 		t = lex();
 	else {
 		t = unused_token;
-		unused_token = mktoken(T_EOF, 0, NULL);
+		putback_token(mktoken(T_EOF, 0, NULL));
 	}
 	return current_token = t;
 }
@@ -363,6 +366,11 @@ mkewhile(Expr *condition, Expr *body)
 	return e;
 }
 
+static Expr *
+mkefun_decl(char *name, Expr *body)
+{
+	return mkexpr(FUN_DECL, body, NULL, 0, name);
+}
 
 static Expr *
 prim_expr(void)
@@ -411,7 +419,7 @@ token_op(int op)
 static Expr *
 binexpr(int prec)
 {
-	Expr *e, *left, *right;
+	Expr *left, *right;
 	int ttype;
 
 	left = prim_expr();
@@ -487,6 +495,8 @@ statement(void)
 		return while_stmt();
 	case T_FOR:
 		return for_stmt();
+	case T_VOID:
+		return fun_decl();
 	default:
 		fprintf(stderr, "Unexpected token.\n");
 		exit(1);
@@ -570,12 +580,26 @@ for_stmt(void)
 
 }
 
+static Expr *
+fun_decl(void)
+{
+	char *name;
+	Expr *body;
+
+	assert(T_VOID, "void");
+	name = current_token.ide;
+	assert(T_IDE, "identifier");
+	assert(T_LPAR, "(");
+	assert(T_RPAR, ")");
+	body = blk_statements();
+	return mkefun_decl(name, body);
+}
 
 /****************************************************************************/
 /*                              CODE GENERATION                             */
 /****************************************************************************/
 
-static char *reglist[4] = { "%r8", "%r9", "%r10", "%r11" };
+static const char *reglist[4] = { "%r8", "%r9", "%r10", "%r11" };
 static int free_regs[4]  = { 0, 0, 0, 0 };
 static FILE *out;
 static int nlabel = 0;
@@ -836,7 +860,6 @@ cepilog(void)
 int
 main(int argc, char *argv[])
 {
-	Expr *e;
 
 	unused_token = mktoken(T_EOF, 0, NULL);
 	in  = fopen(argv[1], "r");
