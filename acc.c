@@ -525,11 +525,13 @@ static void
 var_decl_stmt(void)
 {
 	char *var;
+	int t;
 
-	assert(T_INT, "int");
+	t = get_type();
+	next_token();
 	var = current_token.ide;
 	assert(T_IDE, "identifier");
-	add_symbol(var);
+	add_symbol(var, t, S_VAR);
 	cglobsym(var);
 	assert(T_SEMI, ";");
 }
@@ -539,17 +541,25 @@ var_assign_stmt(void)
 {
 	char *var;
 	Expr *right, *left;
+	int l, r, sym;
 
 	var = current_token.ide;
 	assert(T_IDE, "identifier");
-	if (find_symbol(var) == -1) {
+	sym = find_symbol(var);
+	if (sym == -1) {
 		fprintf(stderr, "Unknown variable on line %d.\n", linum);
 		exit(1);
 	}
-	left = mkevar(var);
+	left = mkevar(var, symbol_table[sym].type);
 	assert(T_EQU, "=");
 	right = binexpr(0);
-	return mkebin(ASSIGN, left, right);
+	l = left->type;
+	r = right->type;
+	if (!type_compatible(&l, &r, 1)) {
+		fprintf(stderr, "Incompatible types.\n");
+		exit(1);
+	}
+	return mkebin(ASSIGN, left, right, left->type);
 }
 
 static Expr *
