@@ -9,28 +9,37 @@ typedef struct {
 	enum {
 		T_ADD = 1, T_SUB, T_MUL, T_DIV, T_NEQU, T_GT, T_GE, T_LT, T_LE,
 		T_NOT, T_DEQU, T_INT_LIT, T_EQU, T_SEMI, T_PRINT, T_INT, T_IF,
-		T_ELSE, T_WHILE, T_FOR, T_VOID, T_IDE, T_LBRACK, T_RBRACK,
-		T_LPAR, T_RPAR, T_EOF
+		T_ELSE, T_WHILE, T_FOR, T_VOID, T_CHAR, T_IDE, T_LBRACK,
+		T_RBRACK, T_LPAR, T_RPAR, T_EOF
 	} type;
 	int int_val;
 	char *ide;
 } Token;
 
+enum {
+		TY_NONE, TY_VOID, TY_CHAR, TY_INT
+};
+
 typedef struct expr {
 	enum {
 		OP_ADD = 1, OP_SUB, OP_MUL, OP_DIV, OP_NEQU, OP_GT, OP_GE, OP_LT,
 		OP_LE, OP_NOT, OP_EQU, ASSIGN, PRINT, INT_LIT, VAR, IF, WHILE,
-		DEXPR, FUN_DECL
+		DEXPR, FUN_DECL, WIDEN
 	} op;
 	struct expr *left;
 	struct expr *condition;
 	struct expr *right;
 	int int_val;
 	char *var;
+	int type;
 } Expr;
 
 typedef struct {
 	char *name;
+	int type;
+	enum {
+		S_VAR, S_FUN
+	} stype;
 } Symbol;
 
 static Symbol symbol_table[SYMSIZE];
@@ -283,12 +292,16 @@ new_symbol(void)
 }
 
 static int
-add_symbol(char *s)
+add_symbol(char *s, int type, int stype)
 {
 	int n;
 
 	n = new_symbol();
-	symbol_table[n].name = s;
+	symbol_table[n] = (Symbol){
+		.name = s,
+		.type = type,
+		.stype = stype
+	};
 	return n;
 }
 
@@ -307,7 +320,7 @@ assert(int ttype, char *name)
 }
 
 static Expr *
-mkexpr(unsigned int op, Expr *left, Expr *right, int int_val, char *var)
+mkexpr(unsigned int op, Expr *left, Expr *right, int int_val, char *var, int type)
 {
 	Expr *e;
 
@@ -319,40 +332,41 @@ mkexpr(unsigned int op, Expr *left, Expr *right, int int_val, char *var)
 	e->op      = op;
 	e->var     = var;
 	e->left    = left;
+	e->type    = type;
 	e->right   = right;
 	e->int_val = int_val;
 	return e;
 }
 
 static Expr *
-mkeint(int int_val)
+mkeint(int int_val, int type)
 {
-	return mkexpr(INT_LIT, NULL, NULL, int_val, NULL);
+	return mkexpr(INT_LIT, NULL, NULL, int_val, NULL, type);
 }
 
 static Expr *
-mkebin(int op, Expr *left, Expr *right)
+mkebin(int op, Expr *left, Expr *right, int type)
 {
-	return mkexpr(op, left, right, 0, NULL);
+	return mkexpr(op, left, right, 0, NULL, type);
 }
 
 static Expr *
-mkeun(int op, Expr *e)
+mkeun(int op, Expr *e, int type)
 {
-	return mkexpr(op, e, NULL, 0, NULL);
+	return mkexpr(op, e, NULL, 0, NULL, type);
 }
 
 static Expr *
-mkevar(char *var)
+mkevar(char *var, int type)
 {
-	return mkexpr(VAR, NULL, NULL, 0, var);
+	return mkexpr(VAR, NULL, NULL, 0, var, type);
 }
 
 static Expr *
 mkeif(Expr *condition, Expr *ife, Expr *elsee)
 {
 	Expr *e;
-	e = mkebin(IF, ife, elsee);
+	e = mkebin(IF, ife, elsee, TY_NONE);
 	e->condition = condition;
 	return e;
 }
@@ -361,7 +375,7 @@ static Expr *
 mkewhile(Expr *condition, Expr *body)
 {
 	Expr *e;
-	e = mkeun(WHILE, body);
+	e = mkeun(WHILE, body, TY_NONE);
 	e->condition = condition;
 	return e;
 }
@@ -369,7 +383,7 @@ mkewhile(Expr *condition, Expr *body)
 static Expr *
 mkefun_decl(char *name, Expr *body)
 {
-	return mkexpr(FUN_DECL, body, NULL, 0, name);
+	return mkexpr(FUN_DECL, body, NULL, 0, name, TY_NONE);
 }
 
 static Expr *
@@ -380,16 +394,19 @@ prim_expr(void)
 	case T_INT_LIT: {
 		int n = current_token.int_val;
 		next_token();
-		return mkeint(n);
+		if (n == (char)n)
+			return mkeint(n, TY_CHAR);
+		return mkeint(n, TY_INT);
 	}
 	case T_IDE: {
 		char *s = current_token.ide;
-		if (find_symbol(s) == -1) {
+		int n = find_symbol(s);
+		if (n == -1) {
 			fprintf(stderr, "Unknown variable on line %d.\n", linum);
 			exit(1);
 		}
 		next_token();
-		return mkevar(s);
+		return mkevar(s, symbol_table[n].type);
 	}
 	default:
 		fprintf(stderr, "Unexpected token on line %d.\n", linum);
@@ -416,6 +433,30 @@ token_op(int op)
 	exit(1);
 }
 
+static int
+type_compatible(int *l, int *r, int b)
+{
+	if (*l == TY_VOID || *r == TY_VOID)
+		return 0;
+	if (*l == *r) {
+		*l = *r = 0;
+		return 1;
+	}
+	if (*l == TY_CHAR && *r == TY_INT) {
+		*l = WIDEN;
+		*r = 0;
+		return 1;
+	}
+	if (*l == TY_INT && *r == TY_CHAR) {
+		if (b) return 0;
+		*l = 0;
+		*r = WIDEN;
+		return 1;
+	}
+	*l = *r = 0;
+	return 1;
+}
+
 static Expr *
 binexpr(int prec)
 {
@@ -428,23 +469,56 @@ binexpr(int prec)
 		return left;
 
 	while (op_precedence(ttype) > prec) {
+		int l, r;
 		next_token();
 		right = binexpr(prec_op[ttype]);
-		left = mkebin(token_op(ttype), left, right);
+
+		l = left->type;
+		r = right->type;
+		if (!type_compatible(&l, &r, 0)) {
+			fprintf(stderr, "Incompatible types.\n");
+			exit(1);
+		}
+		if (l) left = mkeun(l, left, right->type);
+		if (r) right = mkeun(r, right, left->type);
+
+		left = mkebin(token_op(ttype), left, right, left->type);
+
 		if ((ttype = current_token.type) == T_SEMI || ttype == T_RPAR)
 			return left;
 	}
 	return left;
 }
 
+static int
+get_type(void)
+{
+	switch (current_token.type) {
+	case T_VOID: return TY_VOID;
+	case T_CHAR: return TY_CHAR;
+	case T_INT:  return TY_INT;
+	default:
+		fprintf(stderr, "Illegal type.\n");
+		exit(1);
+	}
+}
+
 static Expr *
 print_stmt(void)
 {
 	Expr *e;
+	int l, r;
 
 	assert(T_PRINT, "print");
 	e = binexpr(0);
-	return mkeun(PRINT, e);
+	l = TY_INT;
+	r = e->type;
+	if (!type_compatible(&l, &r, 0)) {
+		fprintf(stderr, "Incompatible types.\n");
+		exit(1);
+	}
+	if (r) e = mkeun(r, e, TY_INT);
+	return mkeun(PRINT, e, TY_NONE);
 }
 
 static void
