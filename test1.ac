@@ -1,15 +1,10 @@
 void
 main()
 {
-	int i; int j;
-    i = 6; j = 12;
-	print i > j;
-	if (i < j) {
-		print i;
-	} else {
-		print j;
-	}
-	for (i = 0; i < 10; i = i + 1) {
+	int i;
+	i = 6;
+	print i;
+	if (i > 2) {
 		print i;
 	}
 }
