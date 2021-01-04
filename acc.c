@@ -8,11 +8,10 @@
 #define MAX_IDENT_LEN 100
 
 typedef enum {
-		T_ADD, T_SUB, T_MUL, T_DIV, T_EQU,
-		T_IDENT, T_INT, T_SEMI, T_NUM,
-		T_EOF
+		T_OP, T_IDENT, T_INT, T_SEMI, T_NUM, T_EOF
 } Token;
 
+int is_op(int c);
 void next_char(void);
 Token is_keyword(void);
 void next_token(void);
@@ -22,6 +21,12 @@ char lex_ident[MAX_IDENT_LEN];
 int lex_prev_char;
 Token lex_token;
 FILE *in_file;
+
+int
+is_op(int c)
+{
+	return c == '+' || c == '-' || c == '/' || c == '*' || c == '=';
+}
 
 void
 next_char(void)
@@ -58,22 +63,20 @@ next_token(void)
 			next_char();
 		}
 		lex_token = T_NUM;
-	} else {
-		switch (lex_prev_char) {
-		case '+':
+	} else if (is_op(lex_prev_char)) {
+		int i = 0;
+		while (is_op(lex_prev_char)) {
+			lex_ident[i++] = lex_prev_char;
+			if (i >= MAX_IDENT_LEN)
+				exit(1);
 			next_char();
-			lex_token = T_ADD;
-			break;
-		case '-':
-			next_char();
-			lex_token = T_SUB;
-			break;
-		case '*':
-			next_char();
-			lex_token = T_MUL;
-			break;
 		}
+		lex_ident[i] = '\0';
+		lex_token = T_OP;
+	} else if (lex_prev_char == EOF) {
+		lex_token = T_EOF;
 	}
+	exit(1);
 }
 
 /******************************************************************************/
@@ -93,6 +96,8 @@ typedef struct expr {
 	} binop;
 	struct expr *lexpr;
 	struct expr *rexpr;
+	char var[MAX_IDENT_LEN];
+	int num;
 } Expr;
 
 typedef struct {
@@ -104,8 +109,55 @@ typedef struct {
 	Expr *expr;
 } Statement;
 
+typedef struct {
+	int len;
+	char **ops;
+} OpList;
+
+int op(char *op);
+void add_op(char *op, int precedence);
+enum type type(void);
+
+Statement *vardecl(void);
 Statement *affectation(void);
+
+Expr *binop(Expr *lexpr);
 Expr *expr(void);
+
+int
+op(char *op)
+{
+	return lex_token == T_OP && !strcmp(lex_ident, op);
+}
+
+enum type
+type(void)
+{
+	if (lex_token != T_INT)
+		return -1;
+	next_token();
+	return TY_INT;
+}
+
+Statement *
+vardecl(void)
+{
+	Statement *stmt;
+
+	stmt = malloc(sizeof(Statement));
+	stmt->var_type = type();
+	if (stmt->var_type == -1)
+		return NULL;
+	stmt->type = ST_VARDECL;
+	if (lex_token != T_IDENT)
+		return NULL;
+	strcpy(stmt->var, lex_ident);
+	next_token();
+	if (lex_token != T_SEMI)
+		return NULL;
+	next_token();
+	return stmt;
+}
 
 Statement *
 affectation(void)
@@ -117,7 +169,42 @@ affectation(void)
 		return NULL;
 	strcpy(stmt->var, lex_ident);
 	next_token();
+	if (!op("="))
+		return NULL;
+	next_token();
+	stmt->expr = expr();
+	if (!stmt->expr)
+		return NULL;
+	if (lex_token != T_SEMI)
+		return NULL;
+	next_token();
+	stmt->type = ST_AFFE;
 	return stmt;
+}
+
+Expr *
+binop(Expr *lexpr)
+{
+	return lexpr;
+}
+
+Expr *
+expr(void)
+{
+	Expr *e;
+
+	e = malloc(sizeof(Expr));
+	if (lex_token == T_IDENT) {
+		e->type = ET_VAR;
+		strcpy(e->var, lex_ident);
+	} else if (lex_token == T_NUM) {
+		e->type = ET_INT;
+		e->num = lex_int;
+	} else {
+		return NULL;
+	}
+	next_token();
+	return binop(e);
 }
 
 /******************************************************************************/
