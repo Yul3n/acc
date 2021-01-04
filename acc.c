@@ -46,6 +46,10 @@ is_keyword(void)
 void
 next_token(void)
 {
+	while (lex_prev_char == ' ' ||
+	       lex_prev_char == '\t' ||
+	       lex_prev_char == '\n')
+		next_char();
 	if (isalpha(lex_prev_char)) {
 		int i = 0;
 		while (isalnum(lex_prev_char) || lex_prev_char == '_') {
@@ -75,13 +79,16 @@ next_token(void)
 		lex_token = T_OP;
 	} else if (lex_prev_char == EOF) {
 		lex_token = T_EOF;
+	} else {
+		exit(1);
 	}
-	exit(1);
 }
 
 /******************************************************************************/
 
 /** Parser ********************************************************************/
+
+#define OP_TABLE_SIZE 10
 
 enum type {
 	TY_INT
@@ -89,11 +96,9 @@ enum type {
 
 typedef struct expr {
 	enum {
-		ET_INT, ET_BINOP, ET_VAR
+		ET_NUM, ET_BINOP, ET_VAR
 	} type;
-	enum {
-		BO_ADD, BO_SUB, BO_MUL, BO_DIV
-	} binop;
+	char binop[MAX_IDENT_LEN];
 	struct expr *lexpr;
 	struct expr *rexpr;
 	char var[MAX_IDENT_LEN];
@@ -114,20 +119,45 @@ typedef struct {
 	char **ops;
 } OpList;
 
+OpList opTable[OP_TABLE_SIZE];
+
 int op(char *op);
 void add_op(char *op, int precedence);
+void init_op_table(void);
+
 enum type type(void);
 
 Statement *vardecl(void);
 Statement *affectation(void);
 
-Expr *binop(Expr *lexpr);
+Expr *binop(int precedence);
 Expr *expr(void);
 
 int
 op(char *op)
 {
 	return lex_token == T_OP && !strcmp(lex_ident, op);
+}
+
+void
+add_op(char *op, int precedence)
+{
+	opTable[precedence].ops = realloc(opTable[precedence].ops,
+	                                  ++opTable[precedence].len);
+	opTable[precedence].ops[opTable[precedence].len - 1] = op;
+}
+
+void
+init_op_table(void)
+{
+	for (int i = 0; i < 10; ++i) {
+		opTable[i].ops = malloc(sizeof(char *));
+		opTable[i].len = 0;
+	}
+	add_op("+", 4);
+	add_op("-", 4);
+	add_op("*", 3);
+	add_op("/", 3);
 }
 
 enum type
@@ -183,8 +213,31 @@ affectation(void)
 }
 
 Expr *
-binop(Expr *lexpr)
+binop(int precedence)
 {
+	Expr *lexpr;
+	int i;
+
+	if (precedence < 0)
+		return expr();
+	else
+		lexpr = binop(precedence - 1);
+	for (;;) {
+		for (i = 0; i < opTable[precedence].len; ++i) {
+			if (op(opTable[precedence].ops[i])) {
+				Expr *e = malloc(sizeof(Expr));
+				strcpy(e->binop, lex_ident);
+				next_token();
+				e->lexpr = lexpr;
+				e->rexpr = binop(precedence - 1);
+				e->type = ET_BINOP;
+				lexpr = e;
+				break;
+			}
+		}
+		if (i == opTable[precedence].len)
+			return lexpr;
+	}
 	return lexpr;
 }
 
@@ -198,13 +251,53 @@ expr(void)
 		e->type = ET_VAR;
 		strcpy(e->var, lex_ident);
 	} else if (lex_token == T_NUM) {
-		e->type = ET_INT;
+		e->type = ET_NUM;
 		e->num = lex_int;
 	} else {
 		return NULL;
 	}
 	next_token();
-	return binop(e);
+	return e;
 }
 
 /******************************************************************************/
+
+/** Debug *********************************************************************/
+
+void print_expr(Expr e);
+void print_statement(Statement stmt);
+
+void
+print_expr(Expr e)
+{
+	switch (e.type) {
+	case ET_VAR:
+		printf("{\"variable\" : \"%s\"}", e.var);
+		break;
+	case ET_NUM:
+		printf("{\"number\" : %d}", e.num);
+		break;
+	case ET_BINOP:
+		printf("{\"binop\" : \"%s\"", e.binop);
+		printf(", \"lexpr\" : ");
+		print_expr(*e.lexpr);
+		printf(", \"rexpr\" : ");
+		print_expr(*e.rexpr);
+		printf("}");
+		break;
+	}
+}
+
+void print_statement(Statement stmt);
+
+/******************************************************************************/
+
+int
+main()
+{
+	in_file = fopen("test.ac", "r");
+	next_char();
+	next_token();
+	init_op_table();
+	print_expr(*binop(OP_TABLE_SIZE - 1));
+}

@@ -1,6 +1,5 @@
-acc: acc.c
+acc: acc.c test.ac
 	cc acc.c -o acc
-test: acc test1.ac
-	./acc test1.ac
-	cc out.s
-	./a.out 
+	./acc
+test: acc test.ac
+	./acc
