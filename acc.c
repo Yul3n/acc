@@ -80,7 +80,14 @@ next_token(void)
 	} else if (lex_prev_char == EOF) {
 		lex_token = T_EOF;
 	} else {
-		exit(1);
+		switch (lex_prev_char) {
+		case ';':
+			lex_token = T_SEMI;
+			next_char();
+			break;
+		default:
+			exit(1);
+		}
 	}
 }
 
@@ -89,6 +96,7 @@ next_token(void)
 /** Parser ********************************************************************/
 
 #define OP_TABLE_SIZE 10
+#define EXPR() binop(OP_TABLE_SIZE - 1)
 
 enum type {
 	TY_INT
@@ -129,6 +137,7 @@ enum type type(void);
 
 Statement *vardecl(void);
 Statement *affectation(void);
+Statement *statement(void);
 
 Expr *binop(int precedence);
 Expr *expr(void);
@@ -202,7 +211,7 @@ affectation(void)
 	if (!op("="))
 		return NULL;
 	next_token();
-	stmt->expr = expr();
+	stmt->expr = binop(OP_TABLE_SIZE - 1);
 	if (!stmt->expr)
 		return NULL;
 	if (lex_token != T_SEMI)
@@ -210,6 +219,15 @@ affectation(void)
 	next_token();
 	stmt->type = ST_AFFE;
 	return stmt;
+}
+
+Statement *
+statement(void)
+{
+	Statement *stmt;
+
+	stmt = vardecl();
+	return stmt == NULL ? affectation() : stmt;
 }
 
 Expr *
@@ -265,6 +283,7 @@ expr(void)
 /** Debug *********************************************************************/
 
 void print_expr(Expr e);
+void print_type(enum type type);
 void print_statement(Statement stmt);
 
 void
@@ -288,7 +307,33 @@ print_expr(Expr e)
 	}
 }
 
-void print_statement(Statement stmt);
+void
+print_type(enum type type)
+{
+	switch (type) {
+	case TY_INT:
+		printf("\"int\"");
+		break;
+	}
+}
+
+void
+print_statement(Statement stmt)
+{
+	switch (stmt.type) {
+	case ST_AFFE:
+		printf("{\"affectation\" : {\"variable\" : \"%s\", \"body\" :",
+		       stmt.var);
+		print_expr(*stmt.expr);
+		printf("}}");
+		break;
+	case ST_VARDECL:
+		printf("{\"variable declaration\" : {\"type\" :");
+		print_type(stmt.type);
+		printf(", \"variable\" : \"%s\"}}", stmt.var);
+		break;
+	}
+}
 
 /******************************************************************************/
 
@@ -299,5 +344,14 @@ main()
 	next_char();
 	next_token();
 	init_op_table();
-	print_expr(*binop(OP_TABLE_SIZE - 1));
+	printf("[");
+	int i = 0;
+	while (lex_token != T_EOF) {
+		if (!i)
+			i = 1;
+		else
+			printf(",");
+		print_statement(*statement());
+	}
+	printf("]");
 }
