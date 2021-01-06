@@ -213,9 +213,20 @@ Block *
 block(void)
 {
 	Block *blk;
+	Statement *stmt;
 
 	blk = malloc(sizeof(Block));
 	if (lex_token != T_LBRA)
+		return NULL;
+	next_token();
+	blk->size = 0;
+	blk->block = malloc(sizeof(Statement));
+	while ((stmt = statement()) != NULL) {
+		blk->block = realloc(blk->block,
+		                     (++blk->size) * sizeof(Statement));
+		memcpy(blk->block + blk->size - 1, stmt, sizeof(Statement));
+	}
+	if (lex_token != T_RBRA)
 		return NULL;
 	next_token();
 	return blk;
@@ -239,6 +250,18 @@ if_stmt(void)
 	if (lex_token != T_RPAR)
 		return NULL;
 	next_token();
+	stmt->ifb = block();
+	if (!stmt->ifb)
+		return NULL;
+	if (lex_token == T_ELSE) {
+		next_token();
+		stmt->elseb = block();
+		if (!stmt->elseb)
+			return NULL;
+	} else {
+		stmt->elseb = NULL;
+	}
+	stmt->type = ST_IF;
 	return stmt;
 }
 
@@ -291,7 +314,10 @@ statement(void)
 	Statement *stmt;
 
 	stmt = vardecl();
-	return stmt == NULL ? affectation() : stmt;
+	if (stmt)
+		return stmt;
+	stmt = affectation();
+	return stmt == NULL ? if_stmt() : stmt;
 }
 
 Expr *
@@ -349,6 +375,7 @@ expr(void)
 void print_expr(Expr e);
 void print_type(enum type type);
 void print_statement(Statement stmt);
+void print_block(Block blk);
 
 void
 print_expr(Expr e)
@@ -399,9 +426,27 @@ print_statement(Statement stmt)
 	case ST_IF:
 		printf("{\"if\": {\"condition\":");
 		print_expr(*stmt.expr);
+		printf(",\"body\":");
+		print_block(*stmt.ifb);
+		if (stmt.elseb) {
+			printf(",\"else\":");
+			print_block(*stmt.elseb);
+		}
 		printf("}}");
 		break;
 	}
+}
+
+void
+print_block(Block blk)
+{
+	printf("[");
+	for (int i = 0; i < blk.size; ++i) {
+		if (i > 0)
+			printf(",");
+		print_statement(blk.block[i]);
+	}
+	printf("]");
 }
 
 /******************************************************************************/
