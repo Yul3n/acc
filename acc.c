@@ -8,7 +8,8 @@
 #define MAX_IDENT_LEN 100
 
 typedef enum {
-		T_OP, T_IDENT, T_INT, T_SEMI, T_NUM, T_EOF
+	T_OP, T_IDENT, T_INT, T_IF, T_ELSE, T_LPAR, T_RPAR, T_LBRA, T_RBRA,
+	T_SEMI, T_NUM, T_EOF
 } Token;
 
 int is_op(int c);
@@ -39,6 +40,10 @@ is_keyword(void)
 {
 	if (!strcmp(lex_ident, "int")) {
 		return T_INT;
+	} else if (!strcmp(lex_ident, "if")) {
+		return T_IF;
+	} else if (!strcmp(lex_ident, "else")) {
+		return T_ELSE;
 	}
 	return T_IDENT;
 }
@@ -85,6 +90,22 @@ next_token(void)
 			lex_token = T_SEMI;
 			next_char();
 			break;
+		case '(':
+			lex_token = T_LPAR;
+			next_char();
+			break;
+		case ')':
+			lex_token = T_RPAR;
+			next_char();
+			break;
+		case '{':
+			lex_token = T_LBRA;
+			next_char();
+			break;
+		case '}':
+			lex_token = T_RBRA;
+			next_char();
+			break;
 		default:
 			exit(1);
 		}
@@ -113,13 +134,20 @@ typedef struct expr {
 	int num;
 } Expr;
 
-typedef struct {
+typedef struct block {
+	struct statement *block;
+	int size;
+} Block;
+
+typedef struct statement {
 	enum {
-		ST_VARDECL, ST_AFFE
+		ST_VARDECL, ST_AFFE, ST_IF
 	} type;
 	enum type var_type;
 	char var[MAX_IDENT_LEN];
 	Expr *expr;
+	struct block *ifb;
+	struct block *elseb;
 } Statement;
 
 typedef struct {
@@ -135,6 +163,9 @@ void init_op_table(void);
 
 enum type type(void);
 
+Block *block(void);
+
+Statement *if_stmt(void);
 Statement *vardecl(void);
 Statement *affectation(void);
 Statement *statement(void);
@@ -176,6 +207,39 @@ type(void)
 		return -1;
 	next_token();
 	return TY_INT;
+}
+
+Block *
+block(void)
+{
+	Block *blk;
+
+	blk = malloc(sizeof(Block));
+	if (lex_token != T_LBRA)
+		return NULL;
+	next_token();
+	return blk;
+}
+
+Statement *
+if_stmt(void)
+{
+	Statement *stmt;
+
+	stmt = malloc(sizeof(Statement));
+	if (lex_token != T_IF)
+		return NULL;
+	next_token();
+	if (lex_token != T_LPAR)
+		return NULL;
+	next_token();
+	stmt->expr = expr();
+	if (!stmt->expr)
+		return NULL;
+	if (lex_token != T_RPAR)
+		return NULL;
+	next_token();
+	return stmt;
 }
 
 Statement *
@@ -331,6 +395,11 @@ print_statement(Statement stmt)
 		printf("{\"variable declaration\" : {\"type\" :");
 		print_type(stmt.type);
 		printf(", \"variable\" : \"%s\"}}", stmt.var);
+		break;
+	case ST_IF:
+		printf("{\"if\": {\"condition\":");
+		print_expr(*stmt.expr);
+		printf("}}");
 		break;
 	}
 }
