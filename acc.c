@@ -8,8 +8,8 @@
 #define MAX_IDENT_LEN 100
 
 typedef enum {
-	T_OP, T_IDENT, T_INT, T_IF, T_ELSE, T_LPAR, T_RPAR, T_LBRA, T_RBRA,
-	T_SEMI, T_NUM, T_EOF
+	T_OP, T_IDENT, T_INT, T_IF, T_ELSE, T_WHILE, T_FOR, T_LPAR, T_RPAR,
+	T_LBRA, T_RBRA, T_SEMI, T_NUM, T_EOF
 } Token;
 
 int is_op(int c);
@@ -44,6 +44,10 @@ is_keyword(void)
 		return T_IF;
 	} else if (!strcmp(lex_ident, "else")) {
 		return T_ELSE;
+	} else if (!strcmp(lex_ident, "while")) {
+		return T_WHILE;
+	} else if (!strcmp(lex_ident, "for")) {
+		return T_FOR;
 	}
 	return T_IDENT;
 }
@@ -141,12 +145,12 @@ typedef struct block {
 
 typedef struct statement {
 	enum {
-		ST_VARDECL, ST_AFFE, ST_IF
+		ST_VARDECL, ST_AFFE, ST_IF, ST_WHILE
 	} type;
 	enum type var_type;
 	char var[MAX_IDENT_LEN];
 	Expr *expr;
-	struct block *ifb;
+	struct block *body;
 	struct block *elseb;
 } Statement;
 
@@ -166,12 +170,21 @@ enum type type(void);
 Block *block(void);
 
 Statement *if_stmt(void);
+Statement *while_stmt(void);
 Statement *vardecl(void);
 Statement *affectation(void);
 Statement *statement(void);
 
 Expr *binop(int precedence);
 Expr *expr(void);
+
+Statement *(*stmt_fun[])(void) = {
+	if_stmt,
+	while_stmt,
+	vardecl,
+	affectation,
+	statement
+};
 
 int
 op(char *op)
@@ -250,8 +263,8 @@ if_stmt(void)
 	if (lex_token != T_RPAR)
 		return NULL;
 	next_token();
-	stmt->ifb = block();
-	if (!stmt->ifb)
+	stmt->body = block();
+	if (!stmt->body)
 		return NULL;
 	if (lex_token == T_ELSE) {
 		next_token();
@@ -262,6 +275,31 @@ if_stmt(void)
 		stmt->elseb = NULL;
 	}
 	stmt->type = ST_IF;
+	return stmt;
+}
+
+Statement *
+while_stmt(void)
+{
+	Statement *stmt;
+
+	stmt = malloc(sizeof(Statement));
+	if (lex_token != T_WHILE)
+		return NULL;
+	next_token();
+	if (lex_token != T_LPAR)
+		return NULL;
+	next_token();
+	stmt->expr = expr();
+	if (!stmt->expr)
+		return NULL;
+	if (lex_token != T_RPAR)
+		return NULL;
+	next_token();
+	stmt->body = block();
+	if (!stmt->body)
+		return NULL;
+	stmt->type = ST_WHILE;
 	return stmt;
 }
 
@@ -313,11 +351,11 @@ statement(void)
 {
 	Statement *stmt;
 
-	stmt = vardecl();
-	if (stmt)
-		return stmt;
-	stmt = affectation();
-	return stmt == NULL ? if_stmt() : stmt;
+	for (int i = 0; i < sizeof(stmt_fun) / sizeof(stmt_fun[0]); ++i) {
+		if ((stmt = stmt_fun[i]()))
+			return stmt;
+	}
+	return NULL;
 }
 
 Expr *
@@ -427,11 +465,18 @@ print_statement(Statement stmt)
 		printf("{\"if\": {\"condition\":");
 		print_expr(*stmt.expr);
 		printf(",\"body\":");
-		print_block(*stmt.ifb);
+		print_block(*stmt.body);
 		if (stmt.elseb) {
 			printf(",\"else\":");
 			print_block(*stmt.elseb);
 		}
+		printf("}}");
+		break;
+	case ST_WHILE:
+		printf("{\"while\": {\"condition\":");
+		print_expr(*stmt.expr);
+		printf(",\"body\":");
+		print_block(*stmt.body);
 		printf("}}");
 		break;
 	}
