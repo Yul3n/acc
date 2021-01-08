@@ -138,20 +138,15 @@ typedef struct expr {
 	int num;
 } Expr;
 
-typedef struct block {
-	struct statement *block;
-	int size;
-} Block;
-
 typedef struct statement {
 	enum {
-		ST_VARDECL, ST_AFFE, ST_IF, ST_WHILE
+		ST_VARDECL, ST_AFFE, ST_IF, ST_WHILE, ST_BLOCK
 	} type;
 	enum type var_type;
 	char var[MAX_IDENT_LEN];
 	Expr *expr;
-	struct block *body;
-	struct block *elseb;
+	struct statement *bodyl;
+	struct statement *bodyr;
 } Statement;
 
 typedef struct {
@@ -167,7 +162,7 @@ void init_op_table(void);
 
 enum type type(void);
 
-Block *block(void);
+Statement *block(void);
 
 Statement *if_stmt(void);
 Statement *while_stmt(void);
@@ -182,8 +177,7 @@ Statement *(*stmt_fun[])(void) = {
 	if_stmt,
 	while_stmt,
 	vardecl,
-	affectation,
-	statement
+	affectation
 };
 
 int
@@ -222,27 +216,32 @@ type(void)
 	return TY_INT;
 }
 
-Block *
+Statement *
 block(void)
 {
-	Block *blk;
-	Statement *stmt;
+	Statement *root, *stmt, *p, buf;
 
-	blk = malloc(sizeof(Block));
 	if (lex_token != T_LBRA)
 		return NULL;
 	next_token();
-	blk->size = 0;
-	blk->block = malloc(sizeof(Statement));
-	while ((stmt = statement()) != NULL) {
-		blk->block = realloc(blk->block,
-		                     (++blk->size) * sizeof(Statement));
-		memcpy(blk->block + blk->size - 1, stmt, sizeof(Statement));
+	root = malloc(sizeof(Statement));
+	p = root;
+	stmt = statement();
+	while (stmt != NULL) {
+
+		p->bodyl = stmt;
+		p->type = ST_BLOCK;
+		if ((stmt = statement()) != NULL) {
+			p->bodyr = malloc(sizeof(Statement));
+			p = p->bodyr;
+		}
 	}
 	if (lex_token != T_RBRA)
 		return NULL;
 	next_token();
-	return blk;
+	buf = *p->bodyl;
+	*p = buf;
+	return root;
 }
 
 Statement *
@@ -263,16 +262,16 @@ if_stmt(void)
 	if (lex_token != T_RPAR)
 		return NULL;
 	next_token();
-	stmt->body = block();
-	if (!stmt->body)
+	stmt->bodyl = block();
+	if (!stmt->bodyl)
 		return NULL;
 	if (lex_token == T_ELSE) {
 		next_token();
-		stmt->elseb = block();
-		if (!stmt->elseb)
+		stmt->bodyr = block();
+		if (!stmt->bodyr)
 			return NULL;
 	} else {
-		stmt->elseb = NULL;
+		stmt->bodyr = NULL;
 	}
 	stmt->type = ST_IF;
 	return stmt;
@@ -296,8 +295,8 @@ while_stmt(void)
 	if (lex_token != T_RPAR)
 		return NULL;
 	next_token();
-	stmt->body = block();
-	if (!stmt->body)
+	stmt->bodyl = block();
+	if (!stmt->bodyl)
 		return NULL;
 	stmt->type = ST_WHILE;
 	return stmt;
@@ -413,7 +412,7 @@ expr(void)
 void print_expr(Expr e);
 void print_type(enum type type);
 void print_statement(Statement stmt);
-void print_block(Block blk);
+void print_block(Statement block);
 
 void
 print_expr(Expr e)
@@ -465,10 +464,11 @@ print_statement(Statement stmt)
 		printf("{\"if\": {\"condition\":");
 		print_expr(*stmt.expr);
 		printf(",\"body\":");
-		print_block(*stmt.body);
-		if (stmt.elseb) {
+		print_block(*stmt.bodyl);
+
+		if (stmt.bodyr) {
 			printf(",\"else\":");
-			print_block(*stmt.elseb);
+			print_block(*stmt.bodyr);
 		}
 		printf("}}");
 		break;
@@ -476,21 +476,22 @@ print_statement(Statement stmt)
 		printf("{\"while\": {\"condition\":");
 		print_expr(*stmt.expr);
 		printf(",\"body\":");
-		print_block(*stmt.body);
+		print_block(*stmt.bodyl);
 		printf("}}");
+		break;
+	case ST_BLOCK:
+		print_statement(*stmt.bodyl);
+		printf(",");
+		print_statement(*stmt.bodyr);
 		break;
 	}
 }
 
 void
-print_block(Block blk)
+print_block(Statement block)
 {
 	printf("[");
-	for (int i = 0; i < blk.size; ++i) {
-		if (i > 0)
-			printf(",");
-		print_statement(blk.block[i]);
-	}
+	print_statement(block);
 	printf("]");
 }
 
