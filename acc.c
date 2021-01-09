@@ -140,7 +140,7 @@ typedef struct expr {
 
 typedef struct statement {
 	enum {
-		ST_VARDECL, ST_AFFE, ST_IF, ST_WHILE, ST_BLOCK
+		ST_VARDECL, ST_AFFE, ST_IF, ST_WHILE, ST_BLOCK, ST_EXPR
 	} type;
 	enum type var_type;
 	char var[MAX_IDENT_LEN];
@@ -166,6 +166,7 @@ Statement *block(void);
 
 Statement *if_stmt(void);
 Statement *while_stmt(void);
+Statement *for_stmt(void);
 Statement *vardecl(void);
 Statement *affectation(void);
 Statement *statement(void);
@@ -177,7 +178,8 @@ Statement *(*stmt_fun[])(void) = {
 	if_stmt,
 	while_stmt,
 	vardecl,
-	affectation
+	affectation,
+	for_stmt
 };
 
 int
@@ -299,6 +301,43 @@ while_stmt(void)
 	if (!stmt->bodyl)
 		return NULL;
 	stmt->type = ST_WHILE;
+	return stmt;
+}
+
+Statement *
+for_stmt(void)
+{
+	Statement *while_s, *pre, *post, *stmt;
+
+	while_s = malloc(sizeof(Statement));
+	if (lex_token != T_FOR)
+		return NULL;
+	next_token();
+	if (lex_token != T_LPAR)
+		return NULL;
+	pre = statement();
+	if (!pre)
+		return NULL;
+	while_s->expr = expr();
+	if (!while_s->expr)
+		return NULL;
+	if (lex_token != T_SEMI)
+		return NULL;
+	next_token();
+	post = malloc(sizeof(Statement));
+	post->type = ST_EXPR;
+	post->expr = EXPR();
+	if (lex_token != T_RPAR)
+		return NULL;
+	next_token();
+	while_s->bodyl = malloc(sizeof(Statement));
+	while_s->bodyl->type = ST_BLOCK;
+	while_s->bodyl->bodyl = block();
+	while_s->bodyl->bodyr = post;
+	stmt = malloc(sizeof(Statement));
+	stmt->type = ST_BLOCK;
+	stmt->bodyl = pre;
+	stmt->bodyr = while_s;
 	return stmt;
 }
 
@@ -483,6 +522,11 @@ print_statement(Statement stmt)
 		print_statement(*stmt.bodyl);
 		printf(",");
 		print_statement(*stmt.bodyr);
+		break;
+	case ST_EXPR:
+		printf("{\"expr\":");
+		print_expr(*stmt.expr);
+		printf("}");
 		break;
 	}
 }
