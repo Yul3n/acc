@@ -8,8 +8,10 @@
 #define MAX_IDENT_LEN 100
 
 typedef enum {
-	T_OP, T_IDENT, T_INT, T_IF, T_ELSE, T_WHILE, T_FOR, T_LPAR, T_RPAR,
-	T_LBRA, T_RBRA, T_SEMI, T_NUM, T_EOF
+	T_OP, T_IDENT,
+	T_INT, T_CHAR, T_VOID, T_IF, T_ELSE, T_WHILE, T_FOR,
+	T_LPAR, T_RPAR, T_LBRA, T_RBRA, T_SEMI,
+	T_NUM, T_EOF
 } Token;
 
 int is_op(int c);
@@ -22,11 +24,17 @@ char lex_ident[MAX_IDENT_LEN];
 int lex_prev_char;
 Token lex_token;
 FILE *in_file;
+const char ops[] = {
+	'+', '_', '/', '*', '=', '<', '>'
+};
 
 int
 is_op(int c)
 {
-	return c == '+' || c == '-' || c == '/' || c == '*' || c == '=';
+	for (int i = 0; i < (sizeof(ops) / sizeof(ops[0])); ++i)
+		if (ops[i] == c)
+			return 1;
+	return 0;
 }
 
 void
@@ -38,16 +46,33 @@ next_char(void)
 Token
 is_keyword(void)
 {
-	if (!strcmp(lex_ident, "int")) {
-		return T_INT;
-	} else if (!strcmp(lex_ident, "if")) {
-		return T_IF;
-	} else if (!strcmp(lex_ident, "else")) {
-		return T_ELSE;
-	} else if (!strcmp(lex_ident, "while")) {
-		return T_WHILE;
-	} else if (!strcmp(lex_ident, "for")) {
-		return T_FOR;
+	switch (*lex_ident) {
+	case 'c':
+		if (!strcmp(lex_ident + 1, "har"))
+			return T_CHAR;
+		break;
+	case 'e':
+		if (!strcmp(lex_ident, "else"))
+			return T_ELSE;
+		break;
+	case 'f':
+		if (!strcmp(lex_ident, "for"))
+			return T_FOR;
+		break;
+	case 'i':
+		if (!strcmp(lex_ident, "int"))
+			return T_INT;
+		else if (!strcmp(lex_ident, "if"))
+			return T_IF;
+		break;
+	case 'v':
+		if (!strcmp(lex_ident + 1, "oid"))
+			return T_VOID;
+		break;
+	case 'w':
+		if (!strcmp(lex_ident, "while"))
+			return T_WHILE;
+		break;
 	}
 	return T_IDENT;
 }
@@ -124,12 +149,12 @@ next_token(void)
 #define EXPR() binop(OP_TABLE_SIZE - 1)
 
 enum type {
-	TY_INT
+	TY_INT, TY_CHAR, TY_VOID
 };
 
 typedef struct expr {
 	enum {
-		ET_NUM, ET_BINOP, ET_VAR
+		ET_NUM, ET_BINOP, ET_VAR, ET_FUN_CALL
 	} type;
 	char binop[MAX_IDENT_LEN];
 	struct expr *lexpr;
@@ -203,6 +228,10 @@ init_op_table(void)
 		opTable[i].ops = malloc(sizeof(char *));
 		opTable[i].len = 0;
 	}
+	add_op(">", 6);
+	add_op(">=", 6);
+	add_op("<", 6);
+	add_op("<=", 6);
 	add_op("+", 4);
 	add_op("-", 4);
 	add_op("*", 3);
@@ -315,10 +344,11 @@ for_stmt(void)
 	next_token();
 	if (lex_token != T_LPAR)
 		return NULL;
+	next_token();
 	pre = statement();
 	if (!pre)
 		return NULL;
-	while_s->expr = expr();
+	while_s->expr = EXPR();
 	if (!while_s->expr)
 		return NULL;
 	if (lex_token != T_SEMI)
@@ -330,6 +360,7 @@ for_stmt(void)
 	if (lex_token != T_RPAR)
 		return NULL;
 	next_token();
+	while_s->type = ST_WHILE;
 	while_s->bodyl = malloc(sizeof(Statement));
 	while_s->bodyl->type = ST_BLOCK;
 	while_s->bodyl->bodyl = block();
@@ -471,6 +502,8 @@ print_expr(Expr e)
 		print_expr(*e.rexpr);
 		printf("}");
 		break;
+	case ET_FUN_CALL:
+		break;
 	}
 }
 
@@ -541,6 +574,37 @@ print_block(Statement block)
 
 /******************************************************************************/
 
+/** Symbol Table **************************************************************/
+
+typedef struct {
+	enum {
+		TT_VAR
+	} type;
+	char name[MAX_IDENT_LEN];
+	enum type vtype;
+} Symbol;
+
+#define SYMBOL_TABLE_SIZE 4096
+
+struct sym_table_elem {
+	struct sym_table_elem *next;
+	Symbol elem;
+} *symbol_table[SYMBOL_TABLE_SIZE];
+
+unsigned int hash(const char *s);
+
+unsigned int
+hash(const char *s)
+{
+	unsigned int h;
+
+	for (h = 0; *s != '\0'; ++s)
+		h = *s ^ (31 * h);
+	return h % SYMBOL_TABLE_SIZE;
+}
+
+/******************************************************************************/
+
 int
 main()
 {
@@ -548,14 +612,5 @@ main()
 	next_char();
 	next_token();
 	init_op_table();
-	printf("[");
-	int i = 0;
-	while (lex_token != T_EOF) {
-		if (!i)
-			i = 1;
-		else
-			printf(",");
-		print_statement(*statement());
-	}
-	printf("]");
+	print_block(*block());
 }
