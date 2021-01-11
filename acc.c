@@ -603,6 +603,41 @@ hash(const char *s)
 	return h % SYMBOL_TABLE_SIZE;
 }
 
+Symbol *hash_search(char *s);
+Symbol *hash_new(char *s);
+
+Symbol *
+hash_search(char *s)
+{
+	unsigned int h;
+
+	h = hash(s);
+	if (!symbol_table[h]) {
+		return NULL;
+	} else {
+		struct sym_table_elem *p = symbol_table[h];
+		while (p) {
+			if (!strcmp(s, p->elem.name))
+				return &p->elem;
+			p = p->next;
+		}
+		return NULL;
+	}
+}
+
+Symbol *
+hash_new(char *s)
+{
+	unsigned h;
+
+	h = hash(s);
+	if (!symbol_table[h]) {
+		
+	} else {
+		
+	}
+}
+
 /******************************************************************************/
 
 int
