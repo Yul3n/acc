@@ -511,9 +511,14 @@ void
 print_type(enum type type)
 {
 	switch (type) {
+	case TY_CHAR:
+		printf("\"char\"");
+		break;
 	case TY_INT:
 		printf("\"int\"");
 		break;
+	case TY_VOID:
+		printf("\"void\"");
 	}
 }
 
@@ -632,10 +637,67 @@ hash_new(char *s)
 
 	h = hash(s);
 	if (!symbol_table[h]) {
-		
+		symbol_table[h] = malloc(sizeof(struct sym_table_elem));
+		symbol_table[h]->next = NULL;
+		return &symbol_table[h]->elem;
 	} else {
-		
+		struct sym_table_elem *p = symbol_table[h];
+		while (p->next)
+			p = p->next;
+		p->next = malloc(sizeof(struct sym_table_elem));
+		p = p->next;
+		p->next = NULL;
+		return &p->elem;
 	}
+}
+
+/******************************************************************************/
+
+/** Type System ***************************************************************/
+
+int check_strict(enum type *left, enum type *right);
+int check_widen_left(enum type *left, enum type *right);
+int check_widen_right(enum type *left, enum type *right);
+int check_types(enum type *left, enum type *right);
+
+int
+check_strict(enum type *left, enum type *right)
+{
+	if (*left == TY_VOID || *right == TY_VOID)
+		return 0;
+	return *left == *right;
+}
+
+int
+check_widen_left(enum type *left, enum type *right)
+{
+	if (*left == TY_CHAR && *right == TY_INT) {
+		*left = TY_INT;
+		return 1;
+	}
+	return 0;
+}
+
+int
+check_widen_right(enum type *left, enum type *right)
+{
+	if (*left == TY_INT && *right == TY_CHAR) {
+		*right = TY_INT;
+		return 1;
+	}
+	return 0;
+}
+int
+check_types(enum type *left, enum type *right)
+{
+	if (check_strict(left, right))
+		return 1;
+	else if (check_widen_left(left, right))
+		return 1;
+	else if (check_widen_right(left, right))
+		return 1;
+	else
+		return 0;
 }
 
 /******************************************************************************/
