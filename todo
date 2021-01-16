@@ -1,0 +1,7 @@
++ Type system
++ Structs
++ Enums
++ Arrays
++ Preprocessor
++ UTF-8 (Strings and rune)
++ Pattern matching (Tagged unions)
