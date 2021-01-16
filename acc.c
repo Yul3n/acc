@@ -157,6 +157,7 @@ typedef struct expr {
 		ET_NUM, ET_BINOP, ET_VAR, ET_FUN_CALL
 	} type;
 	enum type etype;
+	enum type cast;
 	char binop[MAX_IDENT_LEN];
 	struct expr *lexpr;
 	struct expr *rexpr;
@@ -670,61 +671,84 @@ enum widen {
 	W_RIGHT = 1, W_LEFT, W_NONE
 };
 
-enum widen check_strict(enum type *left, enum type *right);
-enum widen check_widen_left(enum type *left, enum type *right);
-enum widen check_widen_right(enum type *left, enum type *right);
-enum widen check_types(enum type *left, enum type *right);
+int check_numeric(enum type t);
+int check_strict(enum type left, enum type right);
+int check_widen_left(enum type left, enum type right);
+int check_widen_right(enum type left, enum type right);
+int check_types(enum type left, enum type right);
 int unify_expr_type(Expr *lexpr, Expr *rexpr);
 int check_expr_type(Expr *e);
 int check_stmt_type(Statement *stmt);
 
-enum widen
-check_strict(enum type *left, enum type *right)
+int
+check_numeric(enum type t)
 {
-	if (*left == TY_VOID || *right == TY_VOID)
-		return 0;
-	return *left == *right ? W_NONE : 0;
+	return t == TY_INT || t == TY_CHAR;
 }
 
-enum widen
-check_widen_left(enum type *left, enum type *right)
+int
+check_strict(enum type left, enum type right)
+{
+	if (left == TY_VOID || right == TY_VOID)
+		return 0;
+	return left == right ? W_NONE : 0;
+}
+
+int
+check_widen_left(enum type left, enum type right)
 {
 	if (check_strict(left, right))
 		return W_NONE;
-	if (*left == TY_CHAR && *right == TY_INT) {
-		*left = TY_INT;
-		return W_LEFT;
+	if (left == TY_CHAR && right == TY_INT) {
+		return W_LEFT | TY_INT << 4;
 	}
 	return 0;
 }
 
-enum widen
-check_widen_right(enum type *left, enum type *right)
+int
+check_widen_right(enum type left, enum type right)
 {
 	if (check_strict(left, right))
 		return W_NONE;
-	if (*left == TY_INT && *right == TY_CHAR) {
-		*right = TY_INT;
-		return W_RIGHT;
+	if (left == TY_INT && right == TY_CHAR) {
+		return W_RIGHT || TY_INT << 4;
 	}
 	return 0;
 }
 
-enum widen
-check_types(enum type *left, enum type *right)
+int
+check_types(enum type left, enum type right)
 {
-	if (check_widen_left(left, right))
-		return W_LEFT;
-	else if (check_widen_right(left, right))
-		return W_RIGHT;
-	else
-		return 0;
+	int w;
+
+	w = check_widen_left(left, right);
+	if (w == 0)
+		w = check_widen_right(left, right);
+	return w;
 }
 
 int
 unify_expr_type(Expr *lexpr, Expr *rexpr)
 {
-	
+	int w;
+
+	if (!check_expr_type(lexpr))
+		return 0;
+	if (!check_expr_type(rexpr))
+		return 0;
+	w = check_types(lexpr->etype, rexpr->etype);
+	if (w == 0)
+		return 0;
+	switch ((enum widen)(w & 0b1111)) {
+	case W_LEFT:
+		lexpr->cast = w >> 4;
+		return 1;
+	case W_RIGHT:
+		rexpr->cast = w >> 4;
+		return 1;
+	case W_NONE:
+		return 1;
+	}
 }
 
 int
@@ -743,9 +767,7 @@ check_expr_type(Expr *e)
 		return 1;
 	}
 	case ET_BINOP:
-		check_expr_type(e->lexpr);
-		check_expr_type(e->rexpr);
-		return check_types(&e->lexpr->etype, &e->rexpr->etype);
+		return unify_expr_type(e->lexpr, e->rexpr);
 	case ET_FUN_CALL:
 		return 1;
 	}
@@ -754,6 +776,35 @@ check_expr_type(Expr *e)
 int
 check_stmt_type(Statement *stmt)
 {
+	switch (stmt->type) {
+	case ST_AFFE: {
+		Symbol *s = hash_search(stmt->var);
+		if (!s)
+			exit(1);
+		int w = check_widen_right(s->vtype, stmt->expr->etype);
+		if ((w & 0b1111) != W_NONE) {
+			stmt->expr->cast = w >> 4;
+		}
+		return 1;
+	}
+	case ST_EXPR:
+		return check_expr_type(stmt->expr);
+	case ST_IF:
+		if (!check_expr_type(stmt->expr) ||
+		    !check_numeric(stmt->expr->etype))
+			return 0;
+		return 1;
+	case ST_BLOCK:
+		break;
+	case ST_WHILE:
+		break;
+	case ST_VARDECL: {
+		Symbol *s = hash_new(stmt->var);
+		s->type = TT_VAR;
+		s->vtype = stmt->var_type;
+		return 1;
+	}
+	}
 }
 
 /******************************************************************************/
