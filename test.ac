@@ -1,5 +1,6 @@
 {
-	int c;
+	int a;
+	char c;
 	a = b + c;
 	if (1) {
 		a = b;
