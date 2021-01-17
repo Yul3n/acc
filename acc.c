@@ -779,9 +779,14 @@ check_stmt_type(Statement *stmt)
 	switch (stmt->type) {
 	case ST_AFFE: {
 		Symbol *s = hash_search(stmt->var);
+
+		puts("ee");
 		if (!s)
 			exit(1);
+		check_expr_type(stmt->expr);
 		int w = check_widen_right(s->vtype, stmt->expr->etype);
+		if (!w)
+			return 0;
 		if ((w & 0b1111) != W_NONE) {
 			stmt->expr->cast = w >> 4;
 		}
@@ -790,18 +795,26 @@ check_stmt_type(Statement *stmt)
 	case ST_EXPR:
 		return check_expr_type(stmt->expr);
 	case ST_IF:
+		if (stmt->bodyr && !check_stmt_type(stmt->bodyr))
+			return 0;
+	case ST_WHILE:
+		puts("ee");
 		if (!check_expr_type(stmt->expr) ||
 		    !check_numeric(stmt->expr->etype))
 			return 0;
+		if (!check_stmt_type(stmt->bodyl))
+			return 0;
 		return 1;
 	case ST_BLOCK:
-		break;
-	case ST_WHILE:
-		break;
+		if (!check_stmt_type(stmt->bodyl) ||
+		    !check_stmt_type(stmt->bodyr))
+			return 0;
+		return 1;
 	case ST_VARDECL: {
 		Symbol *s = hash_new(stmt->var);
 		s->type = TT_VAR;
 		s->vtype = stmt->var_type;
+		strcpy(s->name, stmt->var);
 		return 1;
 	}
 	}
@@ -812,9 +825,16 @@ check_stmt_type(Statement *stmt)
 int
 main()
 {
+	Statement *prog;
+
 	in_file = fopen("test.ac", "r");
 	next_char();
 	next_token();
 	init_op_table();
-	print_block(*block());
+	prog = block();
+	if (!prog)
+		return 0;
+	if (!check_stmt_type(prog))
+		return 0;
+	print_block(*prog);
 }
