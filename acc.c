@@ -28,6 +28,11 @@ const char ops[] = {
 	'+', '_', '/', '*', '=', '<', '>'
 };
 
+const Token punct[] = {
+	[';'] = T_SEMI, ['('] = T_LPAR, [')'] = T_RPAR, ['{'] = T_LBRA,
+	['}'] = T_RBRA
+};
+
 int
 is_op(int c)
 {
@@ -52,17 +57,17 @@ is_keyword(void)
 			return T_CHAR;
 		break;
 	case 'e':
-		if (!strcmp(lex_ident, "else"))
+		if (!strcmp(lex_ident + 1, "lse"))
 			return T_ELSE;
 		break;
 	case 'f':
-		if (!strcmp(lex_ident, "for"))
+		if (!strcmp(lex_ident + 1, "or"))
 			return T_FOR;
 		break;
 	case 'i':
-		if (!strcmp(lex_ident, "int"))
+		if (!strcmp(lex_ident + 1, "nt"))
 			return T_INT;
-		else if (!strcmp(lex_ident, "if"))
+		else if (!strcmp(lex_ident + 1, "f"))
 			return T_IF;
 		break;
 	case 'v':
@@ -70,7 +75,7 @@ is_keyword(void)
 			return T_VOID;
 		break;
 	case 'w':
-		if (!strcmp(lex_ident, "while"))
+		if (!strcmp(lex_ident + 1, "hile"))
 			return T_WHILE;
 		break;
 	}
@@ -114,28 +119,10 @@ next_token(void)
 	} else if (lex_prev_char == EOF) {
 		lex_token = T_EOF;
 	} else {
-		switch (lex_prev_char) {
-		case ';':
-			lex_token = T_SEMI;
+		if (punct[lex_prev_char]) {
+			lex_token = punct[lex_prev_char];
 			next_char();
-			break;
-		case '(':
-			lex_token = T_LPAR;
-			next_char();
-			break;
-		case ')':
-			lex_token = T_RPAR;
-			next_char();
-			break;
-		case '{':
-			lex_token = T_LBRA;
-			next_char();
-			break;
-		case '}':
-			lex_token = T_RBRA;
-			next_char();
-			break;
-		default:
+		} else {
 			exit(1);
 		}
 	}
@@ -182,6 +169,13 @@ typedef struct {
 } OpList;
 
 OpList opTable[OP_TABLE_SIZE];
+const struct {
+	char *op;
+	int precedence;
+} defaultOps[] = {
+	{">", 6}, {">=", 6}, {"<", 6}, {"<=", 6}, {"+", 4}, {"-", 4}, {"*", 3},
+	{"/", 3}
+};
 
 int op(char *op);
 void add_op(char *op, int precedence);
@@ -196,6 +190,7 @@ Statement *while_stmt(void);
 Statement *for_stmt(void);
 Statement *vardecl(void);
 Statement *affectation(void);
+Statement *expr_stmt(void);
 Statement *statement(void);
 
 Expr *binop(int precedence);
@@ -230,14 +225,8 @@ init_op_table(void)
 		opTable[i].ops = malloc(sizeof(char *));
 		opTable[i].len = 0;
 	}
-	add_op(">", 6);
-	add_op(">=", 6);
-	add_op("<", 6);
-	add_op("<=", 6);
-	add_op("+", 4);
-	add_op("-", 4);
-	add_op("*", 3);
-	add_op("/", 3);
+	for (int i = 0; i < sizeof(defaultOps) / sizeof(defaultOps[0]); ++i)
+		add_op(defaultOps[i].op, defaultOps[i].precedence);
 }
 
 enum type
@@ -426,6 +415,20 @@ affectation(void)
 	return stmt;
 }
 
+
+Statement *
+expr_stmt(void)
+{
+	Statement *stmt;
+
+	stmt = malloc(sizeof(Statement));
+	stmt->expr = expr();
+	if (!stmt->expr)
+		return NULL;
+	stmt->type = ST_EXPR;
+	return stmt;
+}
+
 Statement *
 statement(void)
 {
@@ -484,109 +487,6 @@ expr(void)
 	}
 	next_token();
 	return e;
-}
-
-/******************************************************************************/
-
-/** Debug *********************************************************************/
-
-void print_expr(Expr e);
-void print_type(enum type type);
-void print_statement(Statement stmt);
-void print_block(Statement block);
-
-void
-print_expr(Expr e)
-{
-	switch (e.type) {
-	case ET_VAR:
-		printf("{\"variable\" : \"%s\"}", e.var);
-		break;
-	case ET_NUM:
-		printf("{\"number\" : %d}", e.num);
-		break;
-	case ET_BINOP:
-		printf("{\"binop\" : \"%s\"", e.binop);
-		printf(", \"lexpr\" : ");
-		print_expr(*e.lexpr);
-		printf(", \"rexpr\" : ");
-		print_expr(*e.rexpr);
-		printf("}");
-		break;
-	case ET_FUN_CALL:
-		break;
-	}
-}
-
-void
-print_type(enum type type)
-{
-	switch (type) {
-	case TY_CHAR:
-		printf("\"char\"");
-		break;
-	case TY_INT:
-		printf("\"int\"");
-		break;
-	case TY_VOID:
-		printf("\"void\"");
-		break;
-	}
-}
-
-void
-print_statement(Statement stmt)
-{
-	switch (stmt.type) {
-	case ST_AFFE:
-		printf("{\"affectation\" : {\"variable\" : \"%s\", \"body\" :",
-		       stmt.var);
-		print_expr(*stmt.expr);
-		printf("}}");
-		break;
-	case ST_VARDECL:
-		printf("{\"variable declaration\" : {\"type\" :");
-		print_type(stmt.var_type);
-		printf(", \"variable\" : \"%s\"}}", stmt.var);
-		break;
-	case ST_IF:
-		printf("{\"if\": {\"condition\":");
-		print_expr(*stmt.expr);
-		printf(",\"body\":");
-		print_block(*stmt.bodyl);
-
-		if (stmt.bodyr) {
-			printf(",\"else\":");
-			print_block(*stmt.bodyr);
-		}
-		printf("}}");
-		break;
-	case ST_WHILE:
-		printf("{\"while\": {\"condition\":");
-		print_expr(*stmt.expr);
-		printf(",\"body\":");
-		print_block(*stmt.bodyl);
-		printf("}}");
-		break;
-	case ST_BLOCK:
-		print_statement(*stmt.bodyl);
-		printf(",");
-		print_statement(*stmt.bodyr);
-		break;
-	case ST_EXPR:
-		printf("{\"expr\":");
-		print_expr(*stmt.expr);
-		printf("}");
-		break;
-	}
-}
-
-void
-print_block(Statement block)
-{
-	printf("[");
-	print_statement(block);
-	printf("]");
 }
 
 /******************************************************************************/
@@ -779,8 +679,6 @@ check_stmt_type(Statement *stmt)
 	switch (stmt->type) {
 	case ST_AFFE: {
 		Symbol *s = hash_search(stmt->var);
-
-		puts("ee");
 		if (!s)
 			exit(1);
 		check_expr_type(stmt->expr);
@@ -798,7 +696,6 @@ check_stmt_type(Statement *stmt)
 		if (stmt->bodyr && !check_stmt_type(stmt->bodyr))
 			return 0;
 	case ST_WHILE:
-		puts("ee");
 		if (!check_expr_type(stmt->expr) ||
 		    !check_numeric(stmt->expr->etype))
 			return 0;
@@ -822,6 +719,109 @@ check_stmt_type(Statement *stmt)
 
 /******************************************************************************/
 
+/** Debug *********************************************************************/
+
+void print_expr(Expr e);
+void print_type(enum type type);
+void print_statement(Statement stmt);
+void print_block(Statement block);
+
+void
+print_expr(Expr e)
+{
+	switch (e.type) {
+	case ET_VAR:
+		printf("{\"variable\" : \"%s\"}", e.var);
+		break;
+	case ET_NUM:
+		printf("{\"number\" : %d}", e.num);
+		break;
+	case ET_BINOP:
+		printf("{\"binop\" : \"%s\"", e.binop);
+		printf(", \"lexpr\" : ");
+		print_expr(*e.lexpr);
+		printf(", \"rexpr\" : ");
+		print_expr(*e.rexpr);
+		printf("}");
+		break;
+	case ET_FUN_CALL:
+		break;
+	}
+}
+
+void
+print_type(enum type type)
+{
+	switch (type) {
+	case TY_CHAR:
+		printf("\"char\"");
+		break;
+	case TY_INT:
+		printf("\"int\"");
+		break;
+	case TY_VOID:
+		printf("\"void\"");
+		break;
+	}
+}
+
+void
+print_statement(Statement stmt)
+{
+	switch (stmt.type) {
+	case ST_AFFE:
+		printf("{\"affectation\" : {\"variable\" : \"%s\", \"body\" :",
+		       stmt.var);
+		print_expr(*stmt.expr);
+		printf("}}");
+		break;
+	case ST_VARDECL:
+		printf("{\"variable declaration\" : {\"type\" :");
+		print_type(stmt.var_type);
+		printf(", \"variable\" : \"%s\"}}", stmt.var);
+		break;
+	case ST_IF:
+		printf("{\"if\": {\"condition\":");
+		print_expr(*stmt.expr);
+		printf(",\"body\":");
+		print_block(*stmt.bodyl);
+
+		if (stmt.bodyr) {
+			printf(",\"else\":");
+			print_block(*stmt.bodyr);
+		}
+		printf("}}");
+		break;
+	case ST_WHILE:
+		printf("{\"while\": {\"condition\":");
+		print_expr(*stmt.expr);
+		printf(",\"body\":");
+		print_block(*stmt.bodyl);
+		printf("}}");
+		break;
+	case ST_BLOCK:
+		print_statement(*stmt.bodyl);
+		printf(",");
+		print_statement(*stmt.bodyr);
+		break;
+	case ST_EXPR:
+		printf("{\"expr\":");
+		print_expr(*stmt.expr);
+		printf("}");
+		break;
+	}
+}
+
+void
+print_block(Statement block)
+{
+	printf("[");
+	print_statement(block);
+	printf("]");
+}
+
+/******************************************************************************/
+
 int
 main()
 {
@@ -833,8 +833,8 @@ main()
 	init_op_table();
 	prog = block();
 	if (!prog)
-		return 0;
+		return 1;
 	if (!check_stmt_type(prog))
-		return 0;
+		return 1;
 	print_block(*prog);
 }
