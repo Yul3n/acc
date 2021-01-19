@@ -10,7 +10,7 @@
 typedef enum {
 	T_OP, T_IDENT,
 	T_INT, T_CHAR, T_VOID, T_IF, T_ELSE, T_WHILE, T_FOR,
-	T_LPAR, T_RPAR, T_LBRA, T_RBRA, T_SEMI,
+	T_LPAR, T_RPAR, T_LBRA, T_RBRA, T_SEMI, T_COMM,
 	T_NUM, T_EOF
 } Token;
 
@@ -30,7 +30,7 @@ const char ops[] = {
 
 const Token punct[] = {
 	[';'] = T_SEMI, ['('] = T_LPAR, [')'] = T_RPAR, ['{'] = T_LBRA,
-	['}'] = T_RBRA
+	['}'] = T_RBRA, [','] = T_COMM
 };
 
 int
@@ -132,7 +132,7 @@ next_token(void)
 
 /** Parser ********************************************************************/
 
-#define OP_TABLE_SIZE 10
+#define OP_TABLE_SIZE 20
 #define EXPR() binop(OP_TABLE_SIZE - 1)
 
 enum type {
@@ -174,7 +174,7 @@ const struct {
 	int precedence;
 } defaultOps[] = {
 	{">", 6}, {">=", 6}, {"<", 6}, {"<=", 6}, {"+", 4}, {"-", 4}, {"*", 3},
-	{"/", 3}
+	{"/", 3}, {"=", 14}
 };
 
 int op(char *op);
@@ -195,13 +195,14 @@ Statement *statement(void);
 
 Expr *binop(int precedence);
 Expr *expr(void);
+Expr *expr_postfix(void);
 
 Statement *(*stmt_fun[])(void) = {
 	if_stmt,
 	while_stmt,
 	vardecl,
-	affectation,
-	for_stmt
+	for_stmt,
+	expr_stmt
 };
 
 int
@@ -221,7 +222,7 @@ add_op(char *op, int precedence)
 void
 init_op_table(void)
 {
-	for (int i = 0; i < 10; ++i) {
+	for (int i = 0; i < OP_TABLE_SIZE; ++i) {
 		opTable[i].ops = malloc(sizeof(char *));
 		opTable[i].len = 0;
 	}
@@ -287,7 +288,7 @@ if_stmt(void)
 	if (lex_token != T_LPAR)
 		return NULL;
 	next_token();
-	stmt->expr = expr();
+	stmt->expr = expr_postfix();
 	if (!stmt->expr)
 		return NULL;
 	if (lex_token != T_RPAR)
@@ -320,7 +321,7 @@ while_stmt(void)
 	if (lex_token != T_LPAR)
 		return NULL;
 	next_token();
-	stmt->expr = expr();
+	stmt->expr = expr_postfix();
 	if (!stmt->expr)
 		return NULL;
 	if (lex_token != T_RPAR)
@@ -422,10 +423,13 @@ expr_stmt(void)
 	Statement *stmt;
 
 	stmt = malloc(sizeof(Statement));
-	stmt->expr = expr();
+	stmt->expr = EXPR();
 	if (!stmt->expr)
 		return NULL;
 	stmt->type = ST_EXPR;
+	if (lex_token != T_SEMI)
+		exit(1);
+	next_token();
 	return stmt;
 }
 
@@ -448,7 +452,7 @@ binop(int precedence)
 	int i;
 
 	if (precedence < 0)
-		return expr();
+		return expr_postfix();
 	else
 		lexpr = binop(precedence - 1);
 	for (;;) {
@@ -482,10 +486,62 @@ expr(void)
 	} else if (lex_token == T_NUM) {
 		e->type = ET_NUM;
 		e->num = lex_int;
+	} else if (lex_token == T_LPAR) {
+		next_token();
+		free(e);
+		e = expr_postfix();
+		if (lex_token != T_RPAR)
+			exit(1);
+		next_token();
 	} else {
 		return NULL;
 	}
 	next_token();
+	return e;
+}
+
+Expr *
+expr_postfix(void)
+{
+	Expr *prexpr, *e;
+
+	prexpr = expr();
+	if (lex_token == T_LPAR) {
+		next_token();
+		e = malloc(sizeof(Expr));
+		e->type = ET_FUN_CALL;
+		e->num = 0;
+		e->lexpr = prexpr;
+		if (lex_token == T_RPAR) {
+			e->rexpr = NULL;
+			next_token();
+		} else {
+			e->rexpr = malloc(sizeof(Expr));
+			e->num++;
+			prexpr = expr_postfix();
+			if (!prexpr)
+				exit(1);
+			e->rexpr[0] = *prexpr;
+			for (;;) {
+				if (lex_token == T_COMM) {
+					next_token();
+					prexpr = expr_postfix();
+					if (!prexpr)
+						exit(1);
+					e->rexpr = realloc(e->rexpr, ++e->num *
+					                   sizeof(Expr));
+					e->rexpr[e->num - 1] = *prexpr;
+				} else if (lex_token == T_RPAR) {
+					next_token();
+					break;
+				} else {
+					exit(1);
+				}
+			}
+		}
+	} else {
+		e = prexpr;
+	}
 	return e;
 }
 
@@ -745,6 +801,18 @@ print_expr(Expr e)
 		printf("}");
 		break;
 	case ET_FUN_CALL:
+		printf("{\"function call\":{\"function\":");
+		print_expr(*e.lexpr);
+		printf(", \"arguments\" : [");
+		if (e.num > 0) {
+			print_expr(e.rexpr[0]);
+			for (int i = 0; i < e.num - 1; ++i) {
+				printf(",");
+				print_expr(e.rexpr[i + 1]);
+
+			}
+		}
+		printf("]}}");
 		break;
 	}
 }
