@@ -135,16 +135,21 @@ next_token(void)
 #define OP_TABLE_SIZE 20
 #define EXPR() binop(OP_TABLE_SIZE - 1)
 
-enum type {
-	TY_INT, TY_CHAR, TY_VOID
-};
+typedef struct type {
+	enum {
+		TY_INT, TY_CHAR, TY_VOID, TY_FUN
+	} type;
+	int narg;
+	struct type *arg_type;
+	struct type *res_type;
+} Type;
 
 typedef struct expr {
 	enum {
 		ET_NUM, ET_BINOP, ET_VAR, ET_FUN_CALL
 	} type;
-	enum type etype;
-	enum type cast;
+	Type etype;
+	Type cast;
 	char binop[MAX_IDENT_LEN];
 	struct expr *lexpr;
 	struct expr *rexpr;
@@ -156,7 +161,7 @@ typedef struct statement {
 	enum {
 		ST_VARDECL, ST_AFFE, ST_IF, ST_WHILE, ST_BLOCK, ST_EXPR
 	} type;
-	enum type var_type;
+	Type var_type;
 	char var[MAX_IDENT_LEN];
 	Expr *expr;
 	struct statement *bodyl;
@@ -181,7 +186,7 @@ int op(char *op);
 void add_op(char *op, int precedence);
 void init_op_table(void);
 
-enum type type(void);
+int type(Type *tp);
 
 Statement *block(void);
 
@@ -189,7 +194,6 @@ Statement *if_stmt(void);
 Statement *while_stmt(void);
 Statement *for_stmt(void);
 Statement *vardecl(void);
-Statement *affectation(void);
 Statement *expr_stmt(void);
 Statement *statement(void);
 
@@ -230,22 +234,22 @@ init_op_table(void)
 		add_op(defaultOps[i].op, defaultOps[i].precedence);
 }
 
-enum type
-type(void)
+int
+type(Type *tp)
 {
-	enum type t;
+	Type t;
 
 	if (lex_token == T_INT)
-		t = TY_INT;
+		tp->type = TY_INT;
 	else if (lex_token == T_VOID)
-		t = TY_VOID;
+		tp->type = TY_VOID;
 	else if (lex_token == T_CHAR) {
-		t = TY_CHAR;
+		tp->type = TY_CHAR;
 	}
 	else
-		return -1;
+		return 0;
 	next_token();
-	return t;
+	return 1;
 }
 
 Statement *
@@ -379,8 +383,7 @@ vardecl(void)
 	Statement *stmt;
 
 	stmt = malloc(sizeof(Statement));
-	stmt->var_type = type();
-	if (stmt->var_type == -1)
+	if (!type(&stmt->var_type))
 		return NULL;
 	stmt->type = ST_VARDECL;
 	if (lex_token != T_IDENT)
@@ -394,30 +397,6 @@ vardecl(void)
 }
 
 Statement *
-affectation(void)
-{
-	Statement *stmt;
-
-	stmt = malloc(sizeof(Statement));
-	if (lex_token != T_IDENT)
-		return NULL;
-	strcpy(stmt->var, lex_ident);
-	next_token();
-	if (!op("="))
-		return NULL;
-	next_token();
-	stmt->expr = binop(OP_TABLE_SIZE - 1);
-	if (!stmt->expr)
-		return NULL;
-	if (lex_token != T_SEMI)
-		return NULL;
-	next_token();
-	stmt->type = ST_AFFE;
-	return stmt;
-}
-
-
-Statement *
 expr_stmt(void)
 {
 	Statement *stmt;
@@ -426,7 +405,15 @@ expr_stmt(void)
 	stmt->expr = EXPR();
 	if (!stmt->expr)
 		return NULL;
-	stmt->type = ST_EXPR;
+	if (stmt->expr->type == ET_BINOP && !strcmp(stmt->expr->binop, "=")) {
+		strcpy(stmt->var, stmt->expr->lexpr->var);
+		Expr *e = malloc(sizeof(Expr));
+		*e = *stmt->expr->rexpr;
+		stmt->expr = e;
+		stmt->type = ST_AFFE;
+	} else {
+		stmt->type = ST_EXPR;
+	}
 	if (lex_token != T_SEMI)
 		exit(1);
 	next_token();
@@ -554,7 +541,7 @@ typedef struct {
 		TT_VAR
 	} type;
 	char name[MAX_IDENT_LEN];
-	enum type vtype;
+	Type vtype;
 } Symbol;
 
 #define SYMBOL_TABLE_SIZE 4096
@@ -627,53 +614,53 @@ enum widen {
 	W_RIGHT = 1, W_LEFT, W_NONE
 };
 
-int check_numeric(enum type t);
-int check_strict(enum type left, enum type right);
-int check_widen_left(enum type left, enum type right);
-int check_widen_right(enum type left, enum type right);
-int check_types(enum type left, enum type right);
+int check_numeric(Type t);
+int check_strict(Type left, Type right);
+int check_widen_left(Type left, Type right);
+int check_widen_right(Type left, Type right);
+int check_types(Type left, Type right);
 int unify_expr_type(Expr *lexpr, Expr *rexpr);
 int check_expr_type(Expr *e);
 int check_stmt_type(Statement *stmt);
 
 int
-check_numeric(enum type t)
+check_numeric(Type t)
 {
-	return t == TY_INT || t == TY_CHAR;
+	return t.type == TY_INT || t.type == TY_CHAR;
 }
 
 int
-check_strict(enum type left, enum type right)
+check_strict(Type left, Type right)
 {
-	if (left == TY_VOID || right == TY_VOID)
+	if (left.type == TY_VOID || right.type == TY_VOID)
 		return 0;
-	return left == right ? W_NONE : 0;
+	return left.type == right.type ? W_NONE : 0;
 }
 
 int
-check_widen_left(enum type left, enum type right)
+check_widen_left(Type left, Type right)
 {
 	if (check_strict(left, right))
 		return W_NONE;
-	if (left == TY_CHAR && right == TY_INT) {
+	if (left.type == TY_CHAR && right.type == TY_INT) {
 		return W_LEFT | TY_INT << 4;
 	}
 	return 0;
 }
 
 int
-check_widen_right(enum type left, enum type right)
+check_widen_right(Type left, Type right)
 {
 	if (check_strict(left, right))
 		return W_NONE;
-	if (left == TY_INT && right == TY_CHAR) {
+	if (left.type == TY_INT && right.type == TY_CHAR) {
 		return W_RIGHT || TY_INT << 4;
 	}
 	return 0;
 }
 
 int
-check_types(enum type left, enum type right)
+check_types(Type left, Type right)
 {
 	int w;
 
@@ -697,10 +684,10 @@ unify_expr_type(Expr *lexpr, Expr *rexpr)
 		return 0;
 	switch ((enum widen)(w & 0b1111)) {
 	case W_LEFT:
-		lexpr->cast = w >> 4;
+		lexpr->cast.type = w >> 4;
 		return 1;
 	case W_RIGHT:
-		rexpr->cast = w >> 4;
+		rexpr->cast.type = w >> 4;
 		return 1;
 	case W_NONE:
 		return 1;
@@ -712,7 +699,7 @@ check_expr_type(Expr *e)
 {
 	switch (e->type) {
 	case ET_NUM:
-		e->etype = (char)e->num == e->num ? TY_CHAR : TY_INT;
+		e->etype.type = (char)e->num == e->num ? TY_CHAR : TY_INT;
 		return 1;
 	case ET_VAR: {
 		Symbol *s;
@@ -742,7 +729,7 @@ check_stmt_type(Statement *stmt)
 		if (!w)
 			return 0;
 		if ((w & 0b1111) != W_NONE) {
-			stmt->expr->cast = w >> 4;
+			stmt->expr->cast.type = w >> 4;
 		}
 		return 1;
 	}
@@ -778,7 +765,7 @@ check_stmt_type(Statement *stmt)
 /** Debug *********************************************************************/
 
 void print_expr(Expr e);
-void print_type(enum type type);
+void print_type(Type type);
 void print_statement(Statement stmt);
 void print_block(Statement block);
 
@@ -818,9 +805,9 @@ print_expr(Expr e)
 }
 
 void
-print_type(enum type type)
+print_type(Type type)
 {
-	switch (type) {
+	switch (type.type) {
 	case TY_CHAR:
 		printf("\"char\"");
 		break;
@@ -829,6 +816,8 @@ print_type(enum type type)
 		break;
 	case TY_VOID:
 		printf("\"void\"");
+		break;
+	case TY_FUN:
 		break;
 	}
 }

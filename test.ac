@@ -3,7 +3,7 @@
 	int b;
 	char c;
 	a = b + c;
-	a(a);
+	a(a,b);
 	if (1) {
 		a = b;
 		b = 1;
@@ -12,7 +12,7 @@
 	while (1) {
 		a = 1;
 	}
-	for (int a; 1+1; 1+1) {
+	for (int d; 1+1; 1+1) {
 		a = 1;
 	}
 }
