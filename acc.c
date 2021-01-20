@@ -610,15 +610,18 @@ hash_new(char *s)
 
 /** Type System ***************************************************************/
 
-enum widen {
-	W_RIGHT = 1, W_LEFT, W_NONE
-};
+typedef struct {
+	enum {
+		W_RIGHT, W_LEFT, W_NONE, W_FAIL
+	} pos;
+	Type cast;
+} Widen;
 
 int check_numeric(Type t);
-int check_strict(Type left, Type right);
-int check_widen_left(Type left, Type right);
-int check_widen_right(Type left, Type right);
-int check_types(Type left, Type right);
+Widen check_strict(Type left, Type right);
+Widen check_widen_left(Type left, Type right);
+Widen check_widen_right(Type left, Type right);
+Widen check_types(Type left, Type right);
 int unify_expr_type(Expr *lexpr, Expr *rexpr);
 int check_expr_type(Expr *e);
 int check_stmt_type(Statement *stmt);
@@ -629,43 +632,43 @@ check_numeric(Type t)
 	return t.type == TY_INT || t.type == TY_CHAR;
 }
 
-int
+Widen
 check_strict(Type left, Type right)
 {
 	if (left.type == TY_VOID || right.type == TY_VOID)
-		return 0;
-	return left.type == right.type ? W_NONE : 0;
+		return (Widen){W_FAIL};
+	return left.type == right.type ? (Widen){W_NONE} : (Widen){W_FAIL};
 }
 
-int
+Widen
 check_widen_left(Type left, Type right)
 {
-	if (check_strict(left, right))
-		return W_NONE;
+	if (check_strict(left, right).pos != W_FAIL)
+		return (Widen){W_NONE};
 	if (left.type == TY_CHAR && right.type == TY_INT) {
-		return W_LEFT | TY_INT << 4;
+		return (Widen){.pos = W_LEFT, .cast = {TY_INT}};
 	}
-	return 0;
+	return (Widen){W_FAIL};
 }
 
-int
+Widen
 check_widen_right(Type left, Type right)
 {
-	if (check_strict(left, right))
-		return W_NONE;
+	if (check_strict(left, right).pos != W_FAIL)
+		return (Widen){W_NONE};
 	if (left.type == TY_INT && right.type == TY_CHAR) {
-		return W_RIGHT || TY_INT << 4;
+		return (Widen){.pos = W_RIGHT, .cast = {TY_INT}};
 	}
-	return 0;
+	return (Widen){W_FAIL};
 }
 
-int
+Widen
 check_types(Type left, Type right)
 {
-	int w;
+	Widen w;
 
 	w = check_widen_left(left, right);
-	if (w == 0)
+	if (w.pos == W_FAIL)
 		w = check_widen_right(left, right);
 	return w;
 }
@@ -673,24 +676,26 @@ check_types(Type left, Type right)
 int
 unify_expr_type(Expr *lexpr, Expr *rexpr)
 {
-	int w;
+	Widen w;
 
 	if (!check_expr_type(lexpr))
 		return 0;
 	if (!check_expr_type(rexpr))
 		return 0;
 	w = check_types(lexpr->etype, rexpr->etype);
-	if (w == 0)
+	if (w.pos == W_FAIL)
 		return 0;
-	switch ((enum widen)(w & 0b1111)) {
+	switch (w.pos) {
 	case W_LEFT:
-		lexpr->cast.type = w >> 4;
+		lexpr->cast = w.cast;
 		return 1;
 	case W_RIGHT:
-		rexpr->cast.type = w >> 4;
+		rexpr->cast = w.cast;
 		return 1;
 	case W_NONE:
 		return 1;
+	case W_FAIL: /* Shouldn't happen */
+		return 0;
 	}
 }
 
@@ -725,11 +730,11 @@ check_stmt_type(Statement *stmt)
 		if (!s)
 			exit(1);
 		check_expr_type(stmt->expr);
-		int w = check_widen_right(s->vtype, stmt->expr->etype);
-		if (!w)
+		Widen w = check_widen_right(s->vtype, stmt->expr->etype);
+		if (w.pos == W_FAIL)
 			return 0;
-		if ((w & 0b1111) != W_NONE) {
-			stmt->expr->cast.type = w >> 4;
+		if (w.pos != W_NONE) {
+			stmt->expr->cast = w.cast;
 		}
 		return 1;
 	}
@@ -793,9 +798,9 @@ print_expr(Expr e)
 		printf(", \"arguments\" : [");
 		if (e.num > 0) {
 			print_expr(e.rexpr[0]);
-			for (int i = 0; i < e.num - 1; ++i) {
+			for (int i = 1; i < e.num; ++i) {
 				printf(",");
-				print_expr(e.rexpr[i + 1]);
+				print_expr(e.rexpr[i]);
 
 			}
 		}
@@ -818,6 +823,17 @@ print_type(Type type)
 		printf("\"void\"");
 		break;
 	case TY_FUN:
+		printf("{\"args\":[");
+		if (type.narg) {
+			print_type(type.arg_type[0]);
+			for (int i = 1; i < type.narg; ++i) {
+				printf(",");
+				print_type(type.arg_type[i]);
+			}
+		}
+		printf("], \"return\":");
+		print_type(*type.res_type);
+		printf("}");
 		break;
 	}
 }
