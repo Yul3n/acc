@@ -10,5 +10,5 @@ OFILES=acc.$O
 
 <$PLAN9/src/mkone
 
-test: acc
+test: o.acc
 	./o.acc test1.ac | jq -M

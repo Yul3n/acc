@@ -3,7 +3,6 @@
 	int b;
 	char c;
 	a = b + c;
-	a(a,b);
 	if (1) {
 		a = b;
 		b = 1;

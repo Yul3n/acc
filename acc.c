@@ -717,6 +717,20 @@ check_expr_type(Expr *e)
 	case ET_BINOP:
 		return unify_expr_type(e->lexpr, e->rexpr);
 	case ET_FUN_CALL:
+		if (!check_expr_type(e->lexpr))
+			return 0;
+		if (e->lexpr->etype.type != TY_FUN)
+			return 0;
+		e->etype = *e->lexpr->etype.res_type;
+		for (int i = 0; i < e->etype.narg; ++i) {
+			Widen w;
+			w = check_widen_right(e->etype.arg_type[i],
+			                e->lexpr[i].etype);
+			if (w.pos == W_FAIL)
+				return 0;
+			else if (w.pos == W_RIGHT)
+				e->lexpr[i].cast = w.cast;
+		}
 		return 1;
 	}
 }
@@ -801,7 +815,6 @@ print_expr(Expr e)
 			for (int i = 1; i < e.num; ++i) {
 				printf(",");
 				print_expr(e.rexpr[i]);
-
 			}
 		}
 		printf("]}}");
