@@ -169,6 +169,18 @@ typedef struct statement {
 } Statement;
 
 typedef struct {
+	enum {
+		D_VAR, D_FUN
+	} type;
+	Type vtype;
+	char name[MAX_IDENT_LEN];
+	char *args;
+	int narg;
+	Expr *expr;
+	Statement *body;
+} Declaration;
+
+typedef struct {
 	int len;
 	char **ops;
 } OpList;
@@ -189,7 +201,6 @@ void init_op_table(void);
 int type(Type *tp);
 
 Statement *block(void);
-
 Statement *if_stmt(void);
 Statement *while_stmt(void);
 Statement *for_stmt(void);
@@ -200,6 +211,8 @@ Statement *statement(void);
 Expr *binop(int precedence);
 Expr *expr(void);
 Expr *expr_postfix(void);
+
+Declaration *decl(void);
 
 Statement *(*stmt_fun[])(void) = {
 	if_stmt,
@@ -530,6 +543,33 @@ expr_postfix(void)
 		e = prexpr;
 	}
 	return e;
+}
+
+Declaration *
+decl(void)
+{
+	Declaration *decl;
+
+	decl = malloc(sizeof(Declaration));
+	if (!type(&decl->vtype))
+		return NULL;
+	if (lex_token != T_IDENT)
+		return NULL;
+	strcpy(decl->name, lex_ident);
+	next_token();
+	if (lex_token == T_SEMI) {
+		next_token();
+		return decl;
+	} else if (lex_token == T_LPAR) {
+		decl->narg = 0;
+		next_token();
+		while (lex_token != T_RPAR) {
+			
+		}
+		return decl;
+	} else {
+		return NULL;
+	}
 }
 
 /******************************************************************************/
